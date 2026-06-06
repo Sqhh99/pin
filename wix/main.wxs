@@ -20,7 +20,6 @@
     <Icon Id="PinIcon" SourceFile="resource\icon\pin.ico" />
     <Property Id="ARPPRODUCTICON" Value="PinIcon" />
     <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
-    <Property Id="ARPNOMODIFY" Value="yes" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf" />
 
