@@ -19,6 +19,8 @@
 
     <Icon Id="PinIcon" SourceFile="resource\icon\pin.ico" />
     <Property Id="ARPPRODUCTICON" Value="PinIcon" />
+    <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
+    <Property Id="ARPNOMODIFY" Value="yes" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf" />
 
@@ -35,6 +37,11 @@
 
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="PinExecutable" Guid="C9A91AA0-7B5E-47C2-A51F-A994C61979C7">
+        <RegistryKey Root="HKCU" Key="Software\sqhh99\Pin">
+          <RegistryValue Name="installed" Type="integer" Value="1" KeyPath="yes" />
+          <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
+          <RegistryValue Name="Version" Type="string" Value="$(var.Version)" />
+        </RegistryKey>
         <File Id="PinExe" Source="$(var.CargoTargetBinDir)\pin.exe" />
         <Shortcut
           Id="ApplicationStartMenuShortcut"
@@ -44,24 +51,14 @@
           Target="[INSTALLFOLDER]pin.exe"
           WorkingDirectory="INSTALLFOLDER"
           Icon="PinIcon" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
         <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
-        <RegistryValue
-          Root="HKCU"
-          Key="Software\sqhh99\Pin"
-          Name="installed"
-          Type="integer"
-          Value="1"
-          KeyPath="yes" />
-      </Component>
-
-      <Component Id="LicenseFile" Guid="8EE1829A-98B2-4A1E-8B51-545FB77385E3">
-        <File Id="LicenseTxt" Source="LICENSE" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <Feature Id="DefaultFeature" Title="Pin" Level="1">
       <ComponentRef Id="PinExecutable" />
-      <ComponentRef Id="LicenseFile" />
     </Feature>
 
     <UIRef Id="WixUI_InstallDir" />
