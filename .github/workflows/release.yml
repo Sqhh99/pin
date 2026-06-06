@@ -26,23 +26,47 @@ jobs:
         with:
           shared-key: pin-release
 
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: |
+          choco install wixtoolset --no-progress -y
+          $wixRoot = Get-ChildItem "${env:ProgramFiles(x86)}" -Directory -Filter "WiX Toolset*" |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $wixRoot) {
+            throw "WiX Toolset install directory was not found"
+          }
+          $wixBin = Join-Path $wixRoot.FullName "bin"
+          $wixBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "WIX=$($wixRoot.FullName)\" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --locked
+
       - name: Build release
-        run: cargo build --release --target x86_64-pc-windows-msvc
+        run: cargo build --release
 
       - name: Run tests
-        run: cargo test --release --target x86_64-pc-windows-msvc
+        run: cargo test --release
+
+      - name: Build MSI
+        run: cargo wix --no-build --nocapture
 
       - name: Stage artifact
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p dist
-          cp target/x86_64-pc-windows-msvc/release/pin.exe "dist/pin-${GITHUB_REF_NAME}-windows-x64.exe"
-          ls -la dist/
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $msi = Get-ChildItem target\wix -Filter *.msi | Select-Object -First 1
+          if (-not $msi) {
+            throw "MSI artifact was not found in target\wix"
+          }
+          Copy-Item $msi.FullName "dist\pin-${env:GITHUB_REF_NAME}-windows-x64.msi"
+          Get-ChildItem dist
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/pin-*.exe
+          files: dist/*.msi
           generate_release_notes: true
           draft: false
           prerelease: false

@@ -23,6 +23,10 @@ cargo build --release
 
 The binary is at `target/release/pin.exe`.
 
+Tagged releases are built by GitHub Actions. Pushing a `v*` tag builds the
+Windows release binary, packages it as an MSI installer with WiX/cargo-wix, and
+uploads `pin-<tag>-windows-x64.msi` to the GitHub Release.
+
 Cross-compile from Linux/WSL works too:
 
 ```bash
