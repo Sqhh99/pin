@@ -21,7 +21,7 @@ use anyhow::{anyhow, Result};
 use log::{debug, info, warn};
 use once_cell::sync::OnceCell;
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER,
     BI_RGB, DIB_RGB_COLORS, HBITMAP,
@@ -30,17 +30,19 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
     CopyIcon, CreateIconIndirect, CreateWindowExW, DefWindowProcW, DestroyCursor, DestroyWindow,
-    GetParent, GetWindow, GetWindowLongPtrW, LoadCursorW, PostMessageW, RegisterClassExW,
-    SetCursor, SetForegroundWindow, SetSystemCursor, SetWindowLongPtrW,
-    SystemParametersInfoW, GWLP_USERDATA, GW_OWNER, HCURSOR, ICONINFO, IDC_ARROW, OCR_APPSTARTING,
-    OCR_CROSS, OCR_HAND, OCR_IBEAM, OCR_NO, OCR_NORMAL, OCR_SIZEALL, OCR_SIZENESW, OCR_SIZENS,
-    OCR_SIZENWSE, OCR_SIZEWE, OCR_UP, OCR_WAIT, SPIF_SENDCHANGE, SPI_SETCURSORS, SYSTEM_CURSOR_ID,
+    GetClassNameW, GetParent, GetWindow, GetWindowLongPtrW, GetWindowLongW, GetWindowRect,
+    IsIconic, IsWindow, IsWindowVisible, LoadCursorW, PostMessageW, RegisterClassExW, SetCursor,
+    SetForegroundWindow, SetSystemCursor, SetWindowLongPtrW, SystemParametersInfoW, GWLP_USERDATA,
+    GWL_EXSTYLE, GWL_STYLE, GW_OWNER, HCURSOR, ICONINFO, IDC_ARROW, OCR_APPSTARTING, OCR_CROSS,
+    OCR_HAND, OCR_IBEAM, OCR_NO, OCR_NORMAL, OCR_SIZEALL, OCR_SIZENESW, OCR_SIZENS, OCR_SIZENWSE,
+    OCR_SIZEWE, OCR_UP, OCR_WAIT, SPIF_SENDCHANGE, SPI_SETCURSORS, SYSTEM_CURSOR_ID,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_APP, WM_CAPTURECHANGED, WM_KEYDOWN, WM_KILLFOCUS,
     WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_NCDESTROY, WM_RBUTTONDOWN, WM_SETCURSOR,
     WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::resources::{decode_png_resized, rgba_to_bgra};
+use crate::win::{is_pinnable_candidate, Rect, WindowCandidate};
 
 /// Posted when the user picks a target window. `wparam` = top-level HWND as `isize`.
 pub const PICKED_MSG: u32 = WM_APP + 4;
@@ -106,7 +108,10 @@ impl Picker {
             let prev = SetCapture(hwnd);
             debug!("picker opened hwnd={:?} prev_capture={:?}", hwnd.0, prev.0);
             info!("picker opened");
-            Ok(Self { hwnd, cursors_overridden })
+            Ok(Self {
+                hwnd,
+                cursors_overridden,
+            })
         }
     }
 }
@@ -152,9 +157,7 @@ fn override_system_cursors(master: HCURSOR) -> bool {
     let mut any = false;
     for which in SLOTS {
         unsafe {
-            let copy = match CopyIcon(
-                windows::Win32::UI::WindowsAndMessaging::HICON(master.0),
-            ) {
+            let copy = match CopyIcon(windows::Win32::UI::WindowsAndMessaging::HICON(master.0)) {
                 Ok(c) => c,
                 Err(e) => {
                     warn!("CopyIcon({:?}): {e}", which);
@@ -238,22 +241,23 @@ unsafe extern "system" fn picker_proc(
                 if windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt).is_ok() {
                     let target = top_parent_at(pt);
                     let main = HWND(main_raw as *mut _);
-                    if !target.0.is_null() {
-                        debug!("picker click at ({},{}) -> target {:?}", pt.x, pt.y, target.0);
-                        let _ = PostMessageW(
-                            main,
-                            PICKED_MSG,
-                            WPARAM(target.0 as usize),
-                            LPARAM(0),
+                    if is_pinnable_hwnd(target) {
+                        debug!(
+                            "picker click at ({},{}) -> target {:?}",
+                            pt.x, pt.y, target.0
                         );
+                        let _ =
+                            PostMessageW(main, PICKED_MSG, WPARAM(target.0 as usize), LPARAM(0));
+                        let _ = ReleaseCapture();
+                        let _ = DestroyWindow(hwnd);
                     } else {
-                        debug!("picker click at ({},{}) -> no window", pt.x, pt.y);
-                        let _ = PostMessageW(main, PICK_CANCELED_MSG, WPARAM(0), LPARAM(0));
+                        debug!(
+                            "picker click at ({},{}) -> ignored target {:?}",
+                            pt.x, pt.y, target.0
+                        );
                     }
                 }
             }
-            let _ = ReleaseCapture();
-            let _ = DestroyWindow(hwnd);
             LRESULT(0)
         }
         WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_KEYDOWN | WM_SYSKEYDOWN | WM_KILLFOCUS
@@ -298,6 +302,43 @@ fn top_parent_at(pt: POINT) -> HWND {
     }
 }
 
+fn is_pinnable_hwnd(hwnd: HWND) -> bool {
+    if hwnd.0.is_null() {
+        return false;
+    }
+    hwnd_candidate(hwnd)
+        .map(|candidate| is_pinnable_candidate(&candidate))
+        .unwrap_or(false)
+}
+
+fn hwnd_candidate(hwnd: HWND) -> Option<WindowCandidate> {
+    let mut raw_rect = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut raw_rect) }.is_err() {
+        return None;
+    }
+
+    let mut class_buf = [0u16; 256];
+    let class_len = unsafe { GetClassNameW(hwnd, &mut class_buf) };
+    let class_name = if class_len > 0 {
+        String::from_utf16_lossy(&class_buf[..class_len as usize])
+    } else {
+        String::new()
+    };
+
+    let parent = unsafe { GetParent(hwnd) }.unwrap_or(HWND(ptr::null_mut()));
+
+    Some(WindowCandidate {
+        class_name,
+        style: unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 },
+        ex_style: unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 },
+        rect: Rect::from(raw_rect),
+        is_window: unsafe { IsWindow(hwnd) }.as_bool(),
+        is_visible: unsafe { IsWindowVisible(hwnd) }.as_bool(),
+        is_iconic: unsafe { IsIconic(hwnd) }.as_bool(),
+        has_parent: !parent.0.is_null(),
+    })
+}
+
 /// Build an `HCURSOR` from a raw PNG by decoding, resizing to `size_px` square,
 /// then handing the resulting 32-bit ARGB DIB section to `CreateIconIndirect`.
 ///
@@ -325,14 +366,14 @@ unsafe fn create_cursor_from_rgba(rgba: &crate::resources::Rgba) -> Result<HCURS
     bmi.bmiHeader.biCompression = BI_RGB.0;
 
     let mut bits: *mut c_void = ptr::null_mut();
-    let h_color: HBITMAP = match CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
-    {
-        Ok(h) => h,
-        Err(e) => {
-            ReleaseDC(None, screen_dc);
-            return Err(anyhow!("CreateDIBSection: {e}"));
-        }
-    };
+    let h_color: HBITMAP =
+        match CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) {
+            Ok(h) => h,
+            Err(e) => {
+                ReleaseDC(None, screen_dc);
+                return Err(anyhow!("CreateDIBSection: {e}"));
+            }
+        };
     if bits.is_null() {
         let _ = DeleteObject(h_color);
         ReleaseDC(None, screen_dc);
@@ -397,11 +438,10 @@ mod tests {
         // Smoke check: after resizing, the cursor isn't fully transparent /
         // fully empty. If this fails, the source PNG is broken.
         let img = decode_png_resized(PIN_OFF_PNG, CURSOR_SIZE_PX, CURSOR_SIZE_PX).unwrap();
-        let opaque_count = img
-            .pixels
-            .chunks_exact(4)
-            .filter(|p| p[3] > 0)
-            .count();
-        assert!(opaque_count > 0, "pin_off has zero opaque pixels after resize");
+        let opaque_count = img.pixels.chunks_exact(4).filter(|p| p[3] > 0).count();
+        assert!(
+            opaque_count > 0,
+            "pin_off has zero opaque pixels after resize"
+        );
     }
 }
