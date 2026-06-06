@@ -319,11 +319,10 @@ fn hwnd_candidate(hwnd: HWND) -> Option<WindowCandidate> {
 
     let mut class_buf = [0u16; 256];
     let class_len = unsafe { GetClassNameW(hwnd, &mut class_buf) };
-    let class_name = if class_len > 0 {
-        String::from_utf16_lossy(&class_buf[..class_len as usize])
-    } else {
-        String::new()
-    };
+    if class_len == 0 {
+        return None;
+    }
+    let class_name = String::from_utf16_lossy(&class_buf[..class_len as usize]);
 
     let parent = unsafe { GetParent(hwnd) }.unwrap_or(HWND(ptr::null_mut()));
 
