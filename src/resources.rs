@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 
 pub const PIN_ON_PNG: &[u8] = include_bytes!("../resource/icon/pin_on.png");
 pub const PIN_OFF_PNG: &[u8] = include_bytes!("../resource/icon/pin_off.png");
+pub const CANCEL_PNG: &[u8] = include_bytes!("../resource/icon/cancel.png");
 pub const PIN_OFF_ICO: &[u8] = include_bytes!("../resource/icon/pin_off.ico");
 pub const PIN_ICO: &[u8] = include_bytes!("../resource/icon/pin.ico");
 
@@ -98,6 +99,13 @@ mod tests {
     }
 
     #[test]
+    fn cancel_decodes() {
+        let img = decode_png(CANCEL_PNG).expect("cancel png");
+        assert!(img.width > 0 && img.height > 0);
+        assert_eq!(img.pixels.len() as u32, img.width * img.height * 4);
+    }
+
+    #[test]
     fn decode_png_resized_pin_on_to_32() {
         let img = decode_png_resized(PIN_ON_PNG, 32, 32).expect("resize pin_on");
         assert_eq!(img.width, 32);
@@ -111,6 +119,15 @@ mod tests {
         assert_eq!(img.width, 16);
         assert_eq!(img.height, 16);
         assert_eq!(img.pixels.len(), 16 * 16 * 4);
+    }
+
+    #[test]
+    fn decode_png_resized_cancel_to_32_has_visible_pixels() {
+        let img = decode_png_resized(CANCEL_PNG, 32, 32).expect("resize cancel");
+        assert_eq!(img.width, 32);
+        assert_eq!(img.height, 32);
+        assert_eq!(img.pixels.len(), 32 * 32 * 4);
+        assert!(img.pixels.chunks_exact(4).any(|p| p[3] > 0));
     }
 
     #[test]
