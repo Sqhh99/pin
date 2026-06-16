@@ -42,12 +42,15 @@ pub use win_impl::{create_overlay, destroy_overlay, UNPIN_NOTIFY};
 #[cfg(windows)]
 mod win_impl {
     use super::*;
+    use crate::cursor::{build_cursor_from_png, CursorHotspot, CURSOR_SIZE_PX};
+    use crate::resources::CANCEL_PNG;
     use crate::resources::{decode_png_resized, premultiply_bgra_inplace, rgba_to_bgra, Rgba};
     use crate::win::WindowId;
     use anyhow::{anyhow, Result};
-    use log::debug;
+    use log::{debug, warn};
     use once_cell::sync::OnceCell;
     use std::ffi::c_void;
+    use std::sync::atomic::{AtomicIsize, Ordering};
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
     use windows::Win32::Graphics::Gdi::{
@@ -59,12 +62,13 @@ mod win_impl {
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindow, GetWindowLongPtrW,
-        GetWindowLongW, GetWindowRect, IsChild, IsWindow, KillTimer, PostMessageW,
-        RegisterClassExW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-        UpdateLayeredWindow, WindowFromPoint, CW_USEDEFAULT, GWLP_USERDATA, GW_HWNDPREV,
-        GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-        SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_APP, WM_LBUTTONDOWN, WM_NCDESTROY, WM_TIMER,
-        WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        GetWindowLongW, GetWindowRect, IsChild, IsWindow, KillTimer, LoadCursorW, PostMessageW,
+        RegisterClassExW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+        UpdateLayeredWindow, WindowFromPoint, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE,
+        GW_HWNDPREV, HCURSOR, HWND_TOPMOST, IDC_ARROW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_APP, WM_LBUTTONDOWN, WM_MOUSEMOVE,
+        WM_NCDESTROY, WM_SETCURSOR, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
     /// Posted to the main thread after the overlay self-destroys (user clicked
@@ -78,6 +82,7 @@ mod win_impl {
     const TIMER_INTERVAL_MS: u32 = 16;
 
     static CLASS_REGISTERED: OnceCell<()> = OnceCell::new();
+    static OVERLAY_CURSOR: AtomicIsize = AtomicIsize::new(0);
 
     struct OverlayCtx {
         target: isize,
@@ -89,12 +94,22 @@ mod win_impl {
         if CLASS_REGISTERED.get().is_some() {
             return Ok(());
         }
+        let cursor = match build_cursor_from_png(CANCEL_PNG, CURSOR_SIZE_PX, CursorHotspot::Center)
+        {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("overlay cursor fallback to IDC_ARROW: {e}");
+                unsafe { LoadCursorW(None, IDC_ARROW)? }
+            }
+        };
+        OVERLAY_CURSOR.store(cursor.0 as isize, Ordering::SeqCst);
         unsafe {
             let hinstance = GetModuleHandleW(None)?;
             let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: hinstance.into(),
+                hCursor: cursor,
                 lpszClassName: CLASS_NAME,
                 ..Default::default()
             };
@@ -104,6 +119,15 @@ mod win_impl {
         }
         let _ = CLASS_REGISTERED.set(());
         Ok(())
+    }
+
+    unsafe fn set_overlay_cursor() -> bool {
+        let c = OVERLAY_CURSOR.load(Ordering::SeqCst);
+        if c == 0 {
+            return false;
+        }
+        SetCursor(HCURSOR(c as *mut _));
+        true
     }
 
     /// Create a layered overlay anchored to `target`. The PNG is decoded and
@@ -258,6 +282,16 @@ mod win_impl {
         lparam: LPARAM,
     ) -> LRESULT {
         match msg {
+            WM_SETCURSOR => {
+                if set_overlay_cursor() {
+                    return LRESULT(1);
+                }
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+            WM_MOUSEMOVE => {
+                let _ = set_overlay_cursor();
+                LRESULT(0)
+            }
             WM_LBUTTONDOWN => {
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)

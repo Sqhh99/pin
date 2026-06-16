@@ -13,7 +13,6 @@
 
 #![cfg(windows)]
 
-use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -21,36 +20,29 @@ use anyhow::{anyhow, Result};
 use log::{debug, info, warn};
 use once_cell::sync::OnceCell;
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{
-    CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER,
-    BI_RGB, DIB_RGB_COLORS, HBITMAP,
-};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CopyIcon, CreateIconIndirect, CreateWindowExW, DefWindowProcW, DestroyCursor, DestroyWindow,
-    GetClassNameW, GetParent, GetWindow, GetWindowLongPtrW, GetWindowLongW, GetWindowRect,
-    IsIconic, IsWindow, IsWindowVisible, LoadCursorW, PostMessageW, RegisterClassExW, SetCursor,
-    SetForegroundWindow, SetSystemCursor, SetWindowLongPtrW, SystemParametersInfoW, GWLP_USERDATA,
-    GWL_EXSTYLE, GWL_STYLE, GW_OWNER, HCURSOR, ICONINFO, IDC_ARROW, OCR_APPSTARTING, OCR_CROSS,
-    OCR_HAND, OCR_IBEAM, OCR_NO, OCR_NORMAL, OCR_SIZEALL, OCR_SIZENESW, OCR_SIZENS, OCR_SIZENWSE,
-    OCR_SIZEWE, OCR_UP, OCR_WAIT, SPIF_SENDCHANGE, SPI_SETCURSORS, SYSTEM_CURSOR_ID,
+    CopyIcon, CreateWindowExW, DefWindowProcW, DestroyCursor, DestroyWindow, GetClassNameW,
+    GetParent, GetWindow, GetWindowLongPtrW, GetWindowLongW, GetWindowRect, IsIconic, IsWindow,
+    IsWindowVisible, LoadCursorW, PostMessageW, RegisterClassExW, SetCursor, SetForegroundWindow,
+    SetSystemCursor, SetWindowLongPtrW, SystemParametersInfoW, GWLP_USERDATA, GWL_EXSTYLE,
+    GWL_STYLE, GW_OWNER, HCURSOR, IDC_ARROW, OCR_APPSTARTING, OCR_CROSS, OCR_HAND, OCR_IBEAM,
+    OCR_NO, OCR_NORMAL, OCR_SIZEALL, OCR_SIZENESW, OCR_SIZENS, OCR_SIZENWSE, OCR_SIZEWE, OCR_UP,
+    OCR_WAIT, SPIF_SENDCHANGE, SPI_SETCURSORS, SYSTEM_CURSOR_ID,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_APP, WM_CAPTURECHANGED, WM_KEYDOWN, WM_KILLFOCUS,
     WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_NCDESTROY, WM_RBUTTONDOWN, WM_SETCURSOR,
     WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
-use crate::resources::{decode_png_resized, rgba_to_bgra};
+use crate::cursor::{build_cursor_from_png, CursorHotspot, CURSOR_SIZE_PX};
 use crate::win::{is_pinnable_candidate, Rect, WindowCandidate};
 
 /// Posted when the user picks a target window. `wparam` = top-level HWND as `isize`.
 pub const PICKED_MSG: u32 = WM_APP + 4;
 /// Posted when the selection is cancelled (ESC / right click / focus lost).
 pub const PICK_CANCELED_MSG: u32 = WM_APP + 5;
-
-/// Standard cursor side length we ship — 32×32 is the canonical Windows cursor.
-pub const CURSOR_SIZE_PX: u32 = 32;
 
 const CLASS_NAME: PCWSTR = w!("PinPickerClass");
 
@@ -180,16 +172,17 @@ fn ensure_class(cursor_png_bytes: &[u8]) -> Result<()> {
     if CLASS_REGISTERED.get().is_some() {
         return Ok(());
     }
-    let cursor = match build_cursor_from_png(cursor_png_bytes, CURSOR_SIZE_PX) {
-        Ok(c) => {
-            info!("picker cursor built {}x{}", CURSOR_SIZE_PX, CURSOR_SIZE_PX);
-            c
-        }
-        Err(e) => {
-            warn!("picker cursor fallback to IDC_ARROW: {e}");
-            unsafe { LoadCursorW(None, IDC_ARROW)? }
-        }
-    };
+    let cursor =
+        match build_cursor_from_png(cursor_png_bytes, CURSOR_SIZE_PX, CursorHotspot::TopLeft) {
+            Ok(c) => {
+                info!("picker cursor built {}x{}", CURSOR_SIZE_PX, CURSOR_SIZE_PX);
+                c
+            }
+            Err(e) => {
+                warn!("picker cursor fallback to IDC_ARROW: {e}");
+                unsafe { LoadCursorW(None, IDC_ARROW)? }
+            }
+        };
     PICKER_CURSOR.store(cursor.0 as isize, Ordering::SeqCst);
     unsafe {
         let hinstance = GetModuleHandleW(None)?;
@@ -338,83 +331,10 @@ fn hwnd_candidate(hwnd: HWND) -> Option<WindowCandidate> {
     })
 }
 
-/// Build an `HCURSOR` from a raw PNG by decoding, resizing to `size_px` square,
-/// then handing the resulting 32-bit ARGB DIB section to `CreateIconIndirect`.
-///
-/// Per MSDN: the color bitmap supplied to `CreateIconIndirect` is in
-/// **non-premultiplied** ARGB. The mask is a 1-bpp monochrome bitmap; when the
-/// color bitmap carries alpha the mask is largely ignored, so we ship an
-/// all-zero mask sized to match.
-fn build_cursor_from_png(png_bytes: &[u8], size_px: u32) -> Result<HCURSOR> {
-    let img = decode_png_resized(png_bytes, size_px, size_px)?;
-    unsafe { create_cursor_from_rgba(&img) }
-}
-
-unsafe fn create_cursor_from_rgba(rgba: &crate::resources::Rgba) -> Result<HCURSOR> {
-    let w = rgba.width as i32;
-    let h = rgba.height as i32;
-
-    let screen_dc = GetDC(None);
-
-    let mut bmi = BITMAPINFO::default();
-    bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h; // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB.0;
-
-    let mut bits: *mut c_void = ptr::null_mut();
-    let h_color: HBITMAP =
-        match CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) {
-            Ok(h) => h,
-            Err(e) => {
-                ReleaseDC(None, screen_dc);
-                return Err(anyhow!("CreateDIBSection: {e}"));
-            }
-        };
-    if bits.is_null() {
-        let _ = DeleteObject(h_color);
-        ReleaseDC(None, screen_dc);
-        return Err(anyhow!("CreateDIBSection: null bits"));
-    }
-
-    // Copy BGRA (non-premultiplied) into the DIB section.
-    let bgra = rgba_to_bgra(&rgba.pixels);
-    let dst = std::slice::from_raw_parts_mut(bits as *mut u8, bgra.len());
-    dst.copy_from_slice(&bgra);
-
-    // Monochrome mask: all zero. Stride = ((w + 15) / 16) * 2 bytes per row.
-    let mask_stride = ((w as usize + 15) / 16) * 2;
-    let mask_buf = vec![0u8; mask_stride * h as usize];
-    let h_mask = CreateBitmap(w, h, 1, 1, Some(mask_buf.as_ptr() as *const _));
-    if h_mask.is_invalid() {
-        let _ = DeleteObject(h_color);
-        ReleaseDC(None, screen_dc);
-        return Err(anyhow!("CreateBitmap(mask) failed"));
-    }
-
-    let info = ICONINFO {
-        fIcon: BOOL(0), // 0 = cursor (TRUE would mean icon)
-        xHotspot: 0,
-        yHotspot: 0,
-        hbmMask: h_mask,
-        hbmColor: h_color,
-    };
-    let hicon_res = CreateIconIndirect(&info);
-
-    let _ = DeleteObject(h_color);
-    let _ = DeleteObject(h_mask);
-    ReleaseDC(None, screen_dc);
-
-    let hicon = hicon_res.map_err(|e| anyhow!("CreateIconIndirect: {e}"))?;
-    Ok(HCURSOR(hicon.0))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resources::PIN_OFF_PNG;
+    use crate::resources::{decode_png_resized, PIN_OFF_PNG};
 
     #[test]
     fn picker_msg_ids_are_distinct() {

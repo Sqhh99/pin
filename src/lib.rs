@@ -13,6 +13,8 @@ pub mod app;
 #[cfg(windows)]
 pub mod autostart;
 #[cfg(windows)]
+pub mod cursor;
+#[cfg(windows)]
 pub mod selection;
 #[cfg(windows)]
 pub mod tray;
