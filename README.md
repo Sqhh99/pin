@@ -27,6 +27,17 @@ Tagged releases are built by GitHub Actions. Pushing a `v*` tag builds the
 Windows release binary, packages it as an MSI installer with WiX/cargo-wix, and
 uploads `pin-<tag>-windows-x64.msi` to the GitHub Release.
 
+To build the MSI locally on Windows:
+
+```powershell
+cargo build --release --target x86_64-pc-windows-msvc
+pwsh ./scripts/gen-license-rtf.ps1
+cargo wix --no-build --target x86_64-pc-windows-msvc
+```
+
+The installer shows the full AGPL license text and offers an optional desktop
+shortcut (enabled by default).
+
 Cross-compile from Linux/WSL works too:
 
 ```bash
