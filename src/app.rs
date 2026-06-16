@@ -16,12 +16,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassExW, TranslateMessage, HWND_MESSAGE, MSG, WNDCLASSEXW, WS_OVERLAPPED,
 };
 
+use crate::autostart;
 use crate::overlay::{create_overlay, destroy_overlay, UNPIN_NOTIFY};
 use crate::pinned::{PinnedEntry, PinnedSet};
 use crate::resources::{PIN_OFF_PNG, PIN_ON_PNG};
 use crate::selection::{Picker, PICKED_MSG, PICK_CANCELED_MSG};
 use crate::tray::Tray;
 use crate::win::{real::RealWindowApi, WindowId};
+
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+use windows::Win32::System::Threading::CreateMutexW;
 
 const CLASS_NAME: PCWSTR = w!("PinAppMsgWindow");
 
@@ -38,6 +43,21 @@ struct AppState {
 }
 
 pub fn run() -> Result<()> {
+    if another_instance_running()? {
+        info!("another pin instance is already running; exiting");
+        return Ok(());
+    }
+
+    match autostart::reconcile_on_startup() {
+        Ok(state) => {
+            debug!(
+                "autostart: desired={} effective={}",
+                state.desired, state.effective
+            );
+        }
+        Err(e) => warn!("autostart reconcile failed: {e}"),
+    }
+
     let main_hwnd = create_message_window()?;
     let tray = Tray::new()?;
     STATE.with(|s| {
@@ -182,6 +202,20 @@ fn destroy_overlay_isize(h: isize) {
     }
 }
 
+fn another_instance_running() -> Result<bool> {
+    unsafe {
+        let name = encode_wide("Global\\sqhh99.Pin.SingleInstance");
+        let _ = CreateMutexW(None, true, PCWSTR(name.as_ptr()))?;
+        Ok(GetLastError() == ERROR_ALREADY_EXISTS)
+    }
+}
+
+fn encode_wide(s: &str) -> Vec<u16> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    OsStr::new(s).encode_wide().chain(Some(0)).collect()
+}
+
 /// Drain tray and menu event channels. Called once per message-loop iteration.
 fn drain_tray_events() {
     let menu_rx = MenuEvent::receiver();
@@ -201,6 +235,18 @@ fn drain_tray_events() {
                     let drained = state.pinned.drain(&state.api);
                     for (_w, entry) in drained {
                         destroy_overlay_isize(entry.overlay);
+                    }
+                } else if ev.id == state.tray.menu_id_autostart {
+                    let new_on = !autostart::is_desired();
+                    match autostart::apply(new_on) {
+                        Ok(()) => {
+                            let _ = state.tray.autostart_item.set_checked(new_on);
+                            info!(
+                                "autostart {}",
+                                if new_on { "enabled" } else { "disabled" }
+                            );
+                        }
+                        Err(e) => warn!("autostart toggle failed: {e}"),
                     }
                 }
             }

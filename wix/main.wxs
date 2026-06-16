@@ -22,6 +22,7 @@
     <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" />
+    <Property Id="INSTALLAUTOSTART" Value="0" />
     <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -53,9 +54,35 @@
           Target="[INSTALLFOLDER]pin.exe"
           WorkingDirectory="INSTALLFOLDER"
           Icon="PinIcon" />
+        <RemoveRegistryValue
+          Root="HKCU"
+          Key="Software\Microsoft\Windows\CurrentVersion\Run"
+          Name="Pin"
+          On="uninstall" />
         <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
         <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
         <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+      </Component>
+
+      <Component Id="PinIniDefault" Guid="E1A2B3C4-5D6E-7F80-9A1B-2C3D4E5F6A7B">
+        <Condition>NOT INSTALLAUTOSTART</Condition>
+        <File Id="PinIniFile" Source="wix\pin.ini" Name="pin.ini" KeyPath="yes" />
+      </Component>
+
+      <Component Id="PinIniAutostart" Guid="F2B3C4D5-6E7F-8091-A2B3-4C5D6E7F8091">
+        <Condition>INSTALLAUTOSTART = "1"</Condition>
+        <File Id="PinIniFileAuto" Source="wix\pin-autostart.ini" Name="pin.ini" KeyPath="yes" />
+      </Component>
+
+      <Component Id="AutostartRun" Guid="A3B4C5D6-E7F8-9012-B3C4-D5E6F7081920">
+        <Condition>INSTALLAUTOSTART = "1"</Condition>
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Microsoft\Windows\CurrentVersion\Run"
+          Name="Pin"
+          Type="string"
+          Value="&quot;[#PinExe]&quot;"
+          KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
@@ -82,6 +109,9 @@
     <Feature Id="DefaultFeature" Title="Pin" Level="1">
       <ComponentRef Id="PinExecutable" />
       <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="PinIniDefault" />
+      <ComponentRef Id="PinIniAutostart" />
+      <ComponentRef Id="AutostartRun" />
     </Feature>
 
     <UI>
@@ -92,8 +122,8 @@
           <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
         </Control>
 
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Normal}Choose optional shortcuts for Pin." />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="260" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Optional Shortcuts" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Normal}Choose optional settings for Pin." />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="260" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Optional Settings" />
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
@@ -108,6 +138,16 @@
           Property="INSTALLDESKTOPSHORTCUT"
           CheckBoxValue="1"
           Text="Create a &amp;desktop shortcut" />
+        <Control
+          Id="AutostartCheckbox"
+          Type="CheckBox"
+          X="20"
+          Y="105"
+          Width="320"
+          Height="18"
+          Property="INSTALLAUTOSTART"
+          CheckBoxValue="1"
+          Text="Start Pin at &amp;login" />
       </Dialog>
     </UI>
 

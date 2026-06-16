@@ -3,9 +3,10 @@
 #![cfg(windows)]
 
 use anyhow::{anyhow, Context, Result};
-use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon as TrayIconImg, TrayIcon, TrayIconBuilder};
 
+use crate::autostart;
 use crate::resources::{decode_png_resized, Rgba, PIN_OFF_PNG};
 
 /// Side length we resize the tray icon to before handing it to `tray-icon`.
@@ -15,7 +16,9 @@ const TRAY_ICON_PX: u32 = 32;
 pub struct Tray {
     _icon: TrayIcon,
     pub menu_id_unpin_all: tray_icon::menu::MenuId,
+    pub menu_id_autostart: tray_icon::menu::MenuId,
     pub menu_id_quit: tray_icon::menu::MenuId,
+    pub autostart_item: CheckMenuItem,
 }
 
 impl Tray {
@@ -26,8 +29,14 @@ impl Tray {
 
         let menu = Menu::new();
         let unpin_all = MenuItem::new("Unpin all", true, None);
+        let autostart_on = autostart::is_desired();
+        let autostart_item = CheckMenuItem::new("Start at login", true, autostart_on, None);
         let quit = MenuItem::new("Quit", true, None);
         menu.append(&unpin_all).map_err(|e| anyhow!("menu append: {e}"))?;
+        menu.append(&PredefinedMenuItem::separator())
+            .map_err(|e| anyhow!("menu separator: {e}"))?;
+        menu.append(&autostart_item)
+            .map_err(|e| anyhow!("menu append: {e}"))?;
         menu.append(&PredefinedMenuItem::separator())
             .map_err(|e| anyhow!("menu separator: {e}"))?;
         menu.append(&quit).map_err(|e| anyhow!("menu append: {e}"))?;
@@ -43,7 +52,9 @@ impl Tray {
         Ok(Self {
             _icon: tray,
             menu_id_unpin_all: unpin_all.id().clone(),
+            menu_id_autostart: autostart_item.id().clone(),
             menu_id_quit: quit.id().clone(),
+            autostart_item,
         })
     }
 }
