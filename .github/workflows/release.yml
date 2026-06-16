@@ -51,6 +51,8 @@ jobs:
         run: |
           $version = "${env:GITHUB_REF_NAME}" -replace '^v',''
           if (-not $version) { $version = "dev" }
+          # Branch names like feat/autostart must not contain path separators in filenames.
+          $version = $version -replace '[\\/:*?"<>|]', '-'
           New-Item -ItemType Directory -Force dist | Out-Null
           $msi = Get-ChildItem target\wix -Filter *.msi -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending |

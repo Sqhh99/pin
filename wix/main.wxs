@@ -22,6 +22,7 @@
     <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" />
+    <Property Id="INSTALLAUTOSTART" Value="0" />
     <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -37,7 +38,7 @@
     </Directory>
 
     <DirectoryRef Id="INSTALLFOLDER">
-      <Component Id="PinExecutable" Guid="C9A91AA0-7B5E-47C2-A51F-A994C61979C7">
+      <Component Id="PinFiles" Guid="C9A91AA0-7B5E-47C2-A51F-A994C61979C7">
         <RegistryKey Root="HKCU" Key="Software\sqhh99\Pin">
           <RegistryValue Name="installed" Type="integer" Value="1" KeyPath="yes" />
           <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
@@ -45,17 +46,36 @@
         </RegistryKey>
         <File Id="PinExe" Source="$(var.CargoTargetBinDir)\pin.exe" />
         <File Id="LicenseFile" Source="LICENSE" />
-        <Shortcut
-          Id="ApplicationStartMenuShortcut"
-          Directory="ApplicationProgramsFolder"
-          Name="Pin"
-          Description="Pin windows on top"
-          Target="[INSTALLFOLDER]pin.exe"
-          WorkingDirectory="INSTALLFOLDER"
-          Icon="PinIcon" />
+        <File Id="PinIniFile" Source="wix\pin.ini" Name="pin.ini" />
+        <RemoveFile Id="RemovePinExe" Name="pin.exe" On="uninstall" />
+        <RemoveFile Id="RemoveLicenseFile" Name="LICENSE" On="uninstall" />
+        <RemoveFile Id="RemovePinIniFile" Name="pin.ini" On="uninstall" />
+        <RemoveRegistryKey
+          Id="RemovePinRegistryKey"
+          Root="HKCU"
+          Key="Software\sqhh99\Pin"
+          Action="removeOnUninstall" />
         <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
         <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
-        <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+      </Component>
+
+      <Component Id="AutostartRun" Guid="A3B4C5D6-E7F8-9012-B3C4-D5E6F7081920">
+        <Condition>INSTALLAUTOSTART = "1"</Condition>
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Microsoft\Windows\CurrentVersion\Run"
+          Name="Pin"
+          Type="string"
+          Value="&quot;[INSTALLFOLDER]pin.exe&quot;"
+          KeyPath="yes" />
+        <IniFile
+          Id="PinIniSetAutoStart"
+          Directory="INSTALLFOLDER"
+          Name="pin.ini"
+          Section="-"
+          Key="AutoStart"
+          Value="true"
+          Action="addLine" />
       </Component>
     </DirectoryRef>
 
@@ -79,10 +99,50 @@
       </Component>
     </DirectoryRef>
 
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="StartMenuShortcuts" Guid="F91C9DAA-17DF-4D18-9C01-9E03810C45E1">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\sqhh99\Pin"
+          Name="StartMenuShortcuts"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+        <Shortcut
+          Id="ApplicationStartMenuShortcut"
+          Name="Pin"
+          Description="Pin windows on top"
+          Target="[INSTALLFOLDER]pin.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="PinIcon" />
+        <Shortcut
+          Id="ApplicationUninstallShortcut"
+          Name="Uninstall Pin"
+          Description="Uninstall Pin"
+          Target="[SystemFolder]msiexec.exe"
+          Arguments="/x [ProductCode]" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
     <Feature Id="DefaultFeature" Title="Pin" Level="1">
-      <ComponentRef Id="PinExecutable" />
+      <ComponentRef Id="PinFiles" />
+      <ComponentRef Id="StartMenuShortcuts" />
       <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="AutostartRun" />
     </Feature>
+
+    <CustomAction
+      Id="RemoveAutostartRunValue"
+      Directory="TARGETDIR"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore"
+      ExeCommand='[SystemFolder]reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Pin /f' />
+
+    <InstallExecuteSequence>
+      <Custom Action="RemoveAutostartRunValue" After="RemoveFiles">REMOVE="ALL"</Custom>
+    </InstallExecuteSequence>
 
     <UI>
       <Dialog Id="PinOptionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
@@ -92,8 +152,8 @@
           <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
         </Control>
 
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Normal}Choose optional shortcuts for Pin." />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="260" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Optional Shortcuts" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Normal}Choose optional settings for Pin." />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="260" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Optional Settings" />
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
@@ -108,6 +168,16 @@
           Property="INSTALLDESKTOPSHORTCUT"
           CheckBoxValue="1"
           Text="Create a &amp;desktop shortcut" />
+        <Control
+          Id="AutostartCheckbox"
+          Type="CheckBox"
+          X="20"
+          Y="105"
+          Width="320"
+          Height="18"
+          Property="INSTALLAUTOSTART"
+          CheckBoxValue="1"
+          Text="Start Pin automatically when &amp;Windows starts" />
       </Dialog>
     </UI>
 

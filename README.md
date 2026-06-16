@@ -8,10 +8,12 @@ A tiny Windows system-tray utility that lets you "pin" any window so it stays on
 2. **Left-click the tray icon** — your mouse cursor turns into a pin (`pin_off`). You are now in *selection mode*.
 3. **Click any window** — that window becomes topmost and a small pin badge (`pin_on`) appears at the right side of its title bar, just left of the minimize button.
 4. **Click the pin badge** — the window is unpinned and the badge disappears.
-5. **Right-click the tray icon** — opens a menu with `Unpin all` and `Quit`.
+5. **Right-click the tray icon** — opens a menu with `Unpin all`, `Start with Windows`, and `Quit`.
 6. In selection mode you can press **Esc** or **right-click** anywhere to cancel.
 
 The pin badge follows the target window as you move/resize it (~60 fps).
+The `Start with Windows` tray item toggles whether Pin starts automatically when
+you sign in to Windows.
 
 ## Build
 
@@ -35,8 +37,11 @@ pwsh ./scripts/gen-license-rtf.ps1
 cargo wix --no-build --target x86_64-pc-windows-msvc
 ```
 
-The installer shows the full AGPL license text and offers an optional desktop
-shortcut (enabled by default).
+The installer shows the full AGPL license text and offers optional desktop
+shortcut and autostart settings. The autostart option is labeled
+`Start Pin automatically when Windows starts`.
+After installation, Pin can be removed from Windows Apps & Features or from the
+Start Menu shortcut `Uninstall Pin`.
 
 Cross-compile from Linux/WSL works too:
 
