@@ -134,11 +134,11 @@
 
     <CustomAction
       Id="RemoveAutostartRunValue"
-      Directory="SystemFolder"
+      Directory="TARGETDIR"
       Execute="deferred"
       Impersonate="yes"
       Return="ignore"
-      ExeCommand='reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Pin /f' />
+      ExeCommand='[SystemFolder]reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Pin /f' />
 
     <InstallExecuteSequence>
       <Custom Action="RemoveAutostartRunValue" After="RemoveFiles">REMOVE="ALL"</Custom>
