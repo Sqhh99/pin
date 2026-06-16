@@ -46,6 +46,7 @@
         </RegistryKey>
         <File Id="PinExe" Source="$(var.CargoTargetBinDir)\pin.exe" />
         <File Id="LicenseFile" Source="LICENSE" />
+        <File Id="PinIniFile" Source="wix\pin.ini" Name="pin.ini" />
         <Shortcut
           Id="ApplicationStartMenuShortcut"
           Directory="ApplicationProgramsFolder"
@@ -63,16 +64,6 @@
         <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
       </Component>
 
-      <Component Id="PinIniDefault" Guid="E1A2B3C4-5D6E-7F80-9A1B-2C3D4E5F6A7B">
-        <Condition>NOT INSTALLAUTOSTART</Condition>
-        <File Id="PinIniFile" Source="wix\pin.ini" Name="pin.ini" KeyPath="yes" />
-      </Component>
-
-      <Component Id="PinIniAutostart" Guid="F2B3C4D5-6E7F-8091-A2B3-4C5D6E7F8091">
-        <Condition>INSTALLAUTOSTART = "1"</Condition>
-        <File Id="PinIniFileAuto" Source="wix\pin-autostart.ini" Name="pin.ini" KeyPath="yes" />
-      </Component>
-
       <Component Id="AutostartRun" Guid="A3B4C5D6-E7F8-9012-B3C4-D5E6F7081920">
         <Condition>INSTALLAUTOSTART = "1"</Condition>
         <RegistryValue
@@ -80,8 +71,16 @@
           Key="Software\Microsoft\Windows\CurrentVersion\Run"
           Name="Pin"
           Type="string"
-          Value="&quot;[#PinExe]&quot;"
+          Value="&quot;[INSTALLFOLDER]pin.exe&quot;"
           KeyPath="yes" />
+        <IniFile
+          Id="PinIniSetAutoStart"
+          Directory="INSTALLFOLDER"
+          Name="pin.ini"
+          Section="-"
+          Key="AutoStart"
+          Value="true"
+          Action="addLine" />
       </Component>
     </DirectoryRef>
 
@@ -108,8 +107,6 @@
     <Feature Id="DefaultFeature" Title="Pin" Level="1">
       <ComponentRef Id="PinExecutable" />
       <ComponentRef Id="DesktopShortcut" />
-      <ComponentRef Id="PinIniDefault" />
-      <ComponentRef Id="PinIniAutostart" />
       <ComponentRef Id="AutostartRun" />
     </Feature>
 
