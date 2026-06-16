@@ -29,8 +29,10 @@ impl Tray {
 
         let menu = Menu::new();
         let unpin_all = MenuItem::new("Unpin all", true, None);
-        let autostart_on = autostart::is_desired();
-        let autostart_item = CheckMenuItem::new("Start at login", true, autostart_on, None);
+        let autostart_on = autostart::current_state()
+            .map(|state| state.desired)
+            .unwrap_or_else(|_| autostart::is_desired());
+        let autostart_item = CheckMenuItem::new("Start with Windows", true, autostart_on, None);
         let quit = MenuItem::new("Quit", true, None);
         menu.append(&unpin_all).map_err(|e| anyhow!("menu append: {e}"))?;
         menu.append(&PredefinedMenuItem::separator())

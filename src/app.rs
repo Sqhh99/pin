@@ -237,16 +237,23 @@ fn drain_tray_events() {
                         destroy_overlay_isize(entry.overlay);
                     }
                 } else if ev.id == state.tray.menu_id_autostart {
-                    let new_on = !autostart::is_desired();
-                    match autostart::apply(new_on) {
-                        Ok(()) => {
-                            let _ = state.tray.autostart_item.set_checked(new_on);
+                    match autostart::next_toggle_state().and_then(|new_on| {
+                        autostart::apply(new_on)?;
+                        Ok(new_on)
+                    }) {
+                        Ok(new_on) => {
+                            state.tray.autostart_item.set_checked(new_on);
                             info!(
                                 "autostart {}",
                                 if new_on { "enabled" } else { "disabled" }
                             );
                         }
-                        Err(e) => warn!("autostart toggle failed: {e}"),
+                        Err(e) => {
+                            warn!("autostart toggle failed: {e}");
+                            if let Ok(state_after) = autostart::current_state() {
+                                state.tray.autostart_item.set_checked(state_after.desired);
+                            }
+                        }
                     }
                 }
             }

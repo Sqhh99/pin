@@ -143,7 +143,7 @@
           Height="18"
           Property="INSTALLAUTOSTART"
           CheckBoxValue="1"
-          Text="Start Pin at &amp;login" />
+          Text="Start Pin automatically when &amp;Windows starts" />
       </Dialog>
     </UI>
 

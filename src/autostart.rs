@@ -45,20 +45,33 @@ pub fn is_desired() -> bool {
 }
 
 pub fn apply(on: bool) -> Result<()> {
-    write_desired(on)?;
     set_registry(on)?;
+    write_desired(on)?;
     Ok(())
+}
+
+pub fn current_state() -> Result<AutoStartState> {
+    let desired = read_desired_result().unwrap_or(false);
+    let run_state = current_run_state()?;
+    Ok(AutoStartState {
+        desired,
+        effective: run_state == RunState::CurrentExe,
+    })
+}
+
+pub fn next_toggle_state() -> Result<bool> {
+    Ok(toggle_target(current_state()?))
 }
 
 /// Read ini, compare Run, repair drift. Returns final state after reconcile.
 pub fn reconcile_on_startup() -> Result<AutoStartState> {
     let desired = read_desired_result().unwrap_or(false);
-    let effective = registry_points_to_current_exe()?;
-    let action = reconcile_action(desired, effective);
+    let run_state = current_run_state()?;
+    let action = reconcile_action(desired, run_state);
     match action {
         ReconcileAction::Noop => {}
         ReconcileAction::EnableRegistry => {
-            info!("autostart reconcile: ini=true, run missing — restoring Run");
+            info!("autostart reconcile: ini=true, Run is not current — restoring Run");
             set_registry(true)?;
         }
         ReconcileAction::DisableRegistry => {
@@ -66,11 +79,18 @@ pub fn reconcile_on_startup() -> Result<AutoStartState> {
             set_registry(false)?;
         }
     }
-    let effective_after = registry_points_to_current_exe()?;
+    let effective_after = current_run_state()? == RunState::CurrentExe;
     Ok(AutoStartState {
         desired,
         effective: effective_after,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunState {
+    Missing,
+    CurrentExe,
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,14 +100,18 @@ enum ReconcileAction {
     DisableRegistry,
 }
 
-fn reconcile_action(desired: bool, effective: bool) -> ReconcileAction {
-    if desired && !effective {
-        ReconcileAction::EnableRegistry
-    } else if !desired && effective {
-        ReconcileAction::DisableRegistry
-    } else {
-        ReconcileAction::Noop
+fn reconcile_action(desired: bool, run_state: RunState) -> ReconcileAction {
+    match (desired, run_state) {
+        (true, RunState::CurrentExe) | (false, RunState::Missing | RunState::Other) => {
+            ReconcileAction::Noop
+        }
+        (true, RunState::Missing | RunState::Other) => ReconcileAction::EnableRegistry,
+        (false, RunState::CurrentExe) => ReconcileAction::DisableRegistry,
     }
+}
+
+fn toggle_target(state: AutoStartState) -> bool {
+    !state.desired
 }
 
 fn read_desired_result() -> Result<bool> {
@@ -106,6 +130,7 @@ fn write_desired(on: bool) -> Result<()> {
 }
 
 fn parse_ini_autostart(text: &str) -> bool {
+    let mut parsed = None;
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or(line).trim();
         if line.is_empty() {
@@ -113,11 +138,11 @@ fn parse_ini_autostart(text: &str) -> bool {
         }
         if let Some((key, value)) = line.split_once('=') {
             if key.trim().eq_ignore_ascii_case(INI_KEY) {
-                return parse_bool(value.trim());
+                parsed = Some(parse_bool(value.trim()));
             }
         }
     }
-    false
+    parsed.unwrap_or(false)
 }
 
 fn format_ini_autostart(on: bool) -> String {
@@ -128,13 +153,17 @@ fn parse_bool(s: &str) -> bool {
     matches!(s.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
 }
 
-fn registry_points_to_current_exe() -> Result<bool> {
+fn current_run_state() -> Result<RunState> {
     let stored = read_run_value()?;
     let Some(stored) = stored else {
-        return Ok(false);
+        return Ok(RunState::Missing);
     };
     let current = std::env::current_exe().context("current_exe")?;
-    Ok(paths_equal(&stored, &current))
+    if paths_equal(&stored, &current) {
+        Ok(RunState::CurrentExe)
+    } else {
+        Ok(RunState::Other)
+    }
 }
 
 fn set_registry(on: bool) -> Result<()> {
@@ -199,10 +228,16 @@ fn read_run_value() -> Result<Option<PathBuf>> {
             if err.is_err() {
                 return Ok(None);
             }
-            let n = (cb as usize / 2).saturating_sub(1);
+            let mut n = cb as usize / 2;
+            if n > 0 && buf.get(n - 1) == Some(&0) {
+                n -= 1;
+            }
             buf.truncate(n);
             let s = OsString::from_wide(&buf);
-            let path = PathBuf::from(s.to_string_lossy().trim_matches('"').to_string());
+            let raw = s.to_string_lossy();
+            let Some(path) = parse_run_command_path(&raw) else {
+                return Ok(None);
+            };
             Ok(Some(path))
         })();
 
@@ -233,8 +268,7 @@ fn write_run_value(quoted: &str) -> Result<()> {
 
         let name: Vec<u16> = encode_wide(RUN_VALUE_NAME);
         let value: Vec<u16> = encode_wide(quoted);
-        let bytes =
-            std::slice::from_raw_parts(value.as_ptr() as *const u8, value.len() * 2 + 2);
+        let bytes = std::slice::from_raw_parts(value.as_ptr() as *const u8, value.len() * 2);
         let result = RegSetValueExW(
             hkey,
             PCWSTR(name.as_ptr()),
@@ -284,6 +318,34 @@ fn encode_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(Some(0)).collect()
 }
 
+fn parse_run_command_path(value: &str) -> Option<PathBuf> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(rest) = value.strip_prefix('"') {
+        let end = rest.find('"')?;
+        let path = &rest[..end];
+        if path.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(path))
+        }
+    } else {
+        let exe_end = value
+            .to_ascii_lowercase()
+            .find(".exe")
+            .map(|idx| idx + ".exe".len())
+            .unwrap_or_else(|| value.find(char::is_whitespace).unwrap_or(value.len()));
+        let path = value[..exe_end].trim();
+        if path.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(path))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +365,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_ini_last_autostart_value_wins() {
+        assert!(parse_ini_autostart("AutoStart=false\nAutoStart=true\n"));
+        assert!(!parse_ini_autostart("AutoStart=true\nAutoStart=false\n"));
+    }
+
+    #[test]
     fn format_ini_roundtrip() {
         assert_eq!(format_ini_autostart(true), "AutoStart=true\n");
         assert!(parse_ini_autostart(&format_ini_autostart(true)));
@@ -312,15 +380,23 @@ mod tests {
     #[test]
     fn reconcile_action_matrix() {
         assert_eq!(
-            reconcile_action(true, false),
+            reconcile_action(true, RunState::Missing),
             ReconcileAction::EnableRegistry
         );
         assert_eq!(
-            reconcile_action(false, true),
+            reconcile_action(true, RunState::Other),
+            ReconcileAction::EnableRegistry
+        );
+        assert_eq!(
+            reconcile_action(false, RunState::CurrentExe),
             ReconcileAction::DisableRegistry
         );
-        assert_eq!(reconcile_action(true, true), ReconcileAction::Noop);
-        assert_eq!(reconcile_action(false, false), ReconcileAction::Noop);
+        assert_eq!(
+            reconcile_action(true, RunState::CurrentExe),
+            ReconcileAction::Noop
+        );
+        assert_eq!(reconcile_action(false, RunState::Missing), ReconcileAction::Noop);
+        assert_eq!(reconcile_action(false, RunState::Other), ReconcileAction::Noop);
     }
 
     #[test]
@@ -330,5 +406,47 @@ mod tests {
             quote_exe_path(&p),
             r#""C:\Program Files\Pin\pin.exe""#
         );
+    }
+
+    #[test]
+    fn parse_run_command_path_supports_quoted_path() {
+        assert_eq!(
+            parse_run_command_path(r#""C:\Program Files\Pin\pin.exe""#),
+            Some(PathBuf::from(r"C:\Program Files\Pin\pin.exe"))
+        );
+    }
+
+    #[test]
+    fn parse_run_command_path_supports_quoted_path_with_args() {
+        assert_eq!(
+            parse_run_command_path(r#""C:\Program Files\Pin\pin.exe" --minimized"#),
+            Some(PathBuf::from(r"C:\Program Files\Pin\pin.exe"))
+        );
+    }
+
+    #[test]
+    fn parse_run_command_path_supports_unquoted_exe_path() {
+        assert_eq!(
+            parse_run_command_path(r"C:\Tools\pin.exe --minimized"),
+            Some(PathBuf::from(r"C:\Tools\pin.exe"))
+        );
+    }
+
+    #[test]
+    fn parse_run_command_path_rejects_empty_or_unclosed_quote() {
+        assert_eq!(parse_run_command_path(""), None);
+        assert_eq!(parse_run_command_path(r#""C:\Tools\pin.exe"#), None);
+    }
+
+    #[test]
+    fn toggle_target_uses_desired_state() {
+        assert!(!toggle_target(AutoStartState {
+            desired: true,
+            effective: false,
+        }));
+        assert!(toggle_target(AutoStartState {
+            desired: false,
+            effective: true,
+        }));
     }
 }
