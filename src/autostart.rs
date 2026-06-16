@@ -180,11 +180,12 @@ fn read_run_value() -> Result<Option<PathBuf>> {
             KEY_READ,
             &mut hkey,
         )
+        .ok()
         .map_err(|e| anyhow!("RegOpenKeyExW(Run): {e}"))?;
 
         let result = (|| {
             let name: Vec<u16> = encode_wide(RUN_VALUE_NAME);
-            let mut data_type = REG_SZ.0;
+            let mut data_type = REG_SZ;
             let mut buf = vec![0u16; 512];
             let mut cb = (buf.len() * 2) as u32;
             let err = RegQueryValueExW(
@@ -227,6 +228,7 @@ fn write_run_value(quoted: &str) -> Result<()> {
             KEY_SET_VALUE,
             &mut hkey,
         )
+        .ok()
         .map_err(|e| anyhow!("RegOpenKeyExW(Run): {e}"))?;
 
         let name: Vec<u16> = encode_wide(RUN_VALUE_NAME);
@@ -240,6 +242,7 @@ fn write_run_value(quoted: &str) -> Result<()> {
             REG_SZ,
             Some(bytes),
         )
+        .ok()
         .map_err(|e| anyhow!("RegSetValueExW(Run): {e}"));
 
         let _ = RegCloseKey(hkey);

@@ -9,7 +9,9 @@ use std::cell::RefCell;
 use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconEvent;
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{
+    GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, WPARAM,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostQuitMessage,
@@ -24,8 +26,6 @@ use crate::selection::{Picker, PICKED_MSG, PICK_CANCELED_MSG};
 use crate::tray::Tray;
 use crate::win::{real::RealWindowApi, WindowId};
 
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
 
 const CLASS_NAME: PCWSTR = w!("PinAppMsgWindow");
