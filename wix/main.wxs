@@ -57,8 +57,7 @@
         <RemoveRegistryValue
           Root="HKCU"
           Key="Software\Microsoft\Windows\CurrentVersion\Run"
-          Name="Pin"
-          On="uninstall" />
+          Name="Pin" />
         <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
         <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
         <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
