@@ -38,7 +38,7 @@
     </Directory>
 
     <DirectoryRef Id="INSTALLFOLDER">
-      <Component Id="PinExecutable" Guid="C9A91AA0-7B5E-47C2-A51F-A994C61979C7">
+      <Component Id="PinFiles" Guid="C9A91AA0-7B5E-47C2-A51F-A994C61979C7">
         <RegistryKey Root="HKCU" Key="Software\sqhh99\Pin">
           <RegistryValue Name="installed" Type="integer" Value="1" KeyPath="yes" />
           <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
@@ -47,21 +47,16 @@
         <File Id="PinExe" Source="$(var.CargoTargetBinDir)\pin.exe" />
         <File Id="LicenseFile" Source="LICENSE" />
         <File Id="PinIniFile" Source="wix\pin.ini" Name="pin.ini" />
-        <Shortcut
-          Id="ApplicationStartMenuShortcut"
-          Directory="ApplicationProgramsFolder"
-          Name="Pin"
-          Description="Pin windows on top"
-          Target="[INSTALLFOLDER]pin.exe"
-          WorkingDirectory="INSTALLFOLDER"
-          Icon="PinIcon" />
-        <RemoveRegistryValue
+        <RemoveFile Id="RemovePinExe" Name="pin.exe" On="uninstall" />
+        <RemoveFile Id="RemoveLicenseFile" Name="LICENSE" On="uninstall" />
+        <RemoveFile Id="RemovePinIniFile" Name="pin.ini" On="uninstall" />
+        <RemoveRegistryKey
+          Id="RemovePinRegistryKey"
           Root="HKCU"
-          Key="Software\Microsoft\Windows\CurrentVersion\Run"
-          Name="Pin" />
+          Key="Software\sqhh99\Pin"
+          Action="removeOnUninstall" />
         <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
         <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
-        <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
       </Component>
 
       <Component Id="AutostartRun" Guid="A3B4C5D6-E7F8-9012-B3C4-D5E6F7081920">
@@ -104,11 +99,50 @@
       </Component>
     </DirectoryRef>
 
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="StartMenuShortcuts" Guid="F91C9DAA-17DF-4D18-9C01-9E03810C45E1">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\sqhh99\Pin"
+          Name="StartMenuShortcuts"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+        <Shortcut
+          Id="ApplicationStartMenuShortcut"
+          Name="Pin"
+          Description="Pin windows on top"
+          Target="[INSTALLFOLDER]pin.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="PinIcon" />
+        <Shortcut
+          Id="ApplicationUninstallShortcut"
+          Name="Uninstall Pin"
+          Description="Uninstall Pin"
+          Target="[SystemFolder]msiexec.exe"
+          Arguments="/x [ProductCode]" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
     <Feature Id="DefaultFeature" Title="Pin" Level="1">
-      <ComponentRef Id="PinExecutable" />
+      <ComponentRef Id="PinFiles" />
+      <ComponentRef Id="StartMenuShortcuts" />
       <ComponentRef Id="DesktopShortcut" />
       <ComponentRef Id="AutostartRun" />
     </Feature>
+
+    <CustomAction
+      Id="RemoveAutostartRunValue"
+      Directory="SystemFolder"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore"
+      ExeCommand='reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Pin /f' />
+
+    <InstallExecuteSequence>
+      <Custom Action="RemoveAutostartRunValue" After="RemoveFiles">REMOVE="ALL"</Custom>
+    </InstallExecuteSequence>
 
     <UI>
       <Dialog Id="PinOptionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">

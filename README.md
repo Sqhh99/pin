@@ -40,6 +40,8 @@ cargo wix --no-build --target x86_64-pc-windows-msvc
 The installer shows the full AGPL license text and offers optional desktop
 shortcut and autostart settings. The autostart option is labeled
 `Start Pin automatically when Windows starts`.
+After installation, Pin can be removed from Windows Apps & Features or from the
+Start Menu shortcut `Uninstall Pin`.
 
 Cross-compile from Linux/WSL works too:
 
