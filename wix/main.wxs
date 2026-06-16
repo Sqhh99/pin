@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<?include "ui.wxs" ?>
   <Product
     Id="*"
     Name="Pin"
@@ -21,6 +22,7 @@
     <Property Id="ARPPRODUCTICON" Value="PinIcon" />
     <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" />
     <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -32,6 +34,7 @@
       <Directory Id="ProgramMenuFolder">
         <Directory Id="ApplicationProgramsFolder" Name="Pin" />
       </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
     </Directory>
 
     <DirectoryRef Id="INSTALLFOLDER">
@@ -42,6 +45,7 @@
           <RegistryValue Name="Version" Type="string" Value="$(var.Version)" />
         </RegistryKey>
         <File Id="PinExe" Source="$(var.CargoTargetBinDir)\pin.exe" />
+        <File Id="LicenseFile" Source="LICENSE" />
         <Shortcut
           Id="ApplicationStartMenuShortcut"
           Directory="ApplicationProgramsFolder"
@@ -56,11 +60,32 @@
       </Component>
     </DirectoryRef>
 
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="D4E8F1A2-3B4C-5D6E-8F90-1A2B3C4D5E6F">
+        <Condition>INSTALLDESKTOPSHORTCUT = "1"</Condition>
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\sqhh99\Pin"
+          Name="DesktopShortcut"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+        <Shortcut
+          Id="ApplicationDesktopShortcut"
+          Name="Pin"
+          Description="Pin windows on top"
+          Target="[INSTALLFOLDER]pin.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="PinIcon" />
+      </Component>
+    </DirectoryRef>
+
     <Feature Id="DefaultFeature" Title="Pin" Level="1">
       <ComponentRef Id="PinExecutable" />
+      <ComponentRef Id="DesktopShortcut" />
     </Feature>
 
-    <UIRef Id="WixUI_InstallDir" />
+    <UIRef Id="Pin_InstallDir" />
     <UIRef Id="WixUI_ErrorProgressText" />
   </Product>
 </Wix>

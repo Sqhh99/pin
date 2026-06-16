@@ -38,6 +38,10 @@ jobs:
       - name: Run tests
         run: cargo test --release --target x86_64-pc-windows-msvc
 
+      - name: Generate license RTF for installer
+        shell: pwsh
+        run: ./scripts/gen-license-rtf.ps1
+
       - name: Build MSI installer
         run: cargo wix --no-build --nocapture --target x86_64-pc-windows-msvc
 
