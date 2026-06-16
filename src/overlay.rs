@@ -58,12 +58,13 @@ mod win_impl {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowLongPtrW, GetWindowLongW,
-        GetWindowRect, IsWindow, KillTimer, PostMessageW, RegisterClassExW, SetTimer,
-        SetWindowLongPtrW, SetWindowPos, ShowWindow, UpdateLayeredWindow, CW_USEDEFAULT,
-        GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SW_SHOWNOACTIVATE, ULW_ALPHA, WM_APP, WM_LBUTTONDOWN, WM_NCDESTROY, WM_TIMER, WNDCLASSEXW,
-        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindow, GetWindowLongPtrW,
+        GetWindowLongW, GetWindowRect, IsChild, IsWindow, KillTimer, PostMessageW,
+        RegisterClassExW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+        UpdateLayeredWindow, WindowFromPoint, CW_USEDEFAULT, GWLP_USERDATA, GW_HWNDPREV,
+        GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_APP, WM_LBUTTONDOWN, WM_NCDESTROY, WM_TIMER,
+        WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
     /// Posted to the main thread after the overlay self-destroys (user clicked
@@ -164,9 +165,9 @@ mod win_impl {
 
     /// Re-place the overlay over its target's title bar. If the target has
     /// somehow lost `WS_EX_TOPMOST` (some apps clear it themselves), restore
-    /// it FIRST so the subsequent overlay reposition lands on top in the
-    /// z-order — avoiding the target/overlay flicker we used to get when
-    /// the topmost reassertion happened unconditionally and last.
+    /// it first. Position uses `SWP_NOZORDER` (DeskPins `placeOnCaption` style);
+    /// z-order is applied separately so the badge sits above its target but
+    /// below any window already covering the target.
     unsafe fn reposition(overlay: HWND, target: HWND, icon_px: i32) {
         let mut r = RECT::default();
         if GetWindowRect(target, &mut r).is_err() {
@@ -198,8 +199,56 @@ mod win_impl {
             rect.top,
             icon_px,
             icon_px,
-            SWP_NOACTIVATE,
+            SWP_NOACTIVATE | SWP_NOZORDER,
         );
+        place_overlay_above_target(overlay, target);
+
+        let show = overlay_is_unoccluded(overlay, target, rect);
+        let _ = ShowWindow(overlay, if show { SW_SHOWNOACTIVATE } else { SW_HIDE });
+    }
+
+    /// Slot `overlay` directly above `target`, below whatever already covers
+    /// `target`. `SetWindowPos(overlay, target, …)` would place the overlay
+    /// *behind* the target — wrong for a clickable title-bar badge.
+    unsafe fn place_overlay_above_target(overlay: HWND, target: HWND) {
+        let above = GetWindow(target, GW_HWNDPREV).unwrap_or(HWND::default());
+        if above.0.is_null() || above == overlay {
+            let _ = SetWindowPos(
+                target,
+                overlay,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        } else {
+            let _ = SetWindowPos(
+                overlay,
+                above,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+    }
+
+    /// True when nothing unrelated covers the overlay at its screen center.
+    unsafe fn overlay_is_unoccluded(overlay: HWND, target: HWND, rect: Rect) -> bool {
+        let pt = POINT {
+            x: (rect.left + rect.right) / 2,
+            y: (rect.top + rect.bottom) / 2,
+        };
+        let hit = WindowFromPoint(pt);
+        if hit.0.is_null() {
+            return false;
+        }
+        if hit == overlay {
+            return true;
+        }
+        IsChild(target, hit).as_bool()
     }
 
     unsafe extern "system" fn wnd_proc(
