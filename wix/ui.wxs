@@ -1,3 +1,4 @@
+<Include xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Fragment>
     <UI>
       <Dialog Id="PinOptionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
@@ -85,3 +86,4 @@
 
     <UIRef Id="WixUI_Common" />
   </Fragment>
+</Include>
