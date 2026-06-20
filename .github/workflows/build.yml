@@ -2,16 +2,18 @@ name: build
 
 on:
   push:
-    branches-ignore:
-      - 'gh-pages'
-    tags-ignore:
-      - 'v*'
+    branches:
+      - main
   pull_request:
     branches:
       - main
 
 permissions:
   contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:

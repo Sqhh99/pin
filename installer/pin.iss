@@ -65,7 +65,6 @@ Filename: "{app}\pin.ini"; Section: ""; Key: "AutoStart"; String: "true"; Tasks:
 Filename: "{app}\pin.ini"; Section: ""; Key: "AutoStart"; String: "false"; Tasks: not autostart
 
 [UninstallDelete]
-Type: files; Name: "{app}\pin.ini"
 Type: filesandordirs; Name: "{app}"
 
 [Code]

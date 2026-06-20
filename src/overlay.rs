@@ -235,7 +235,7 @@ mod win_impl {
     /// `target`. `SetWindowPos(overlay, target, …)` would place the overlay
     /// *behind* the target — wrong for a clickable title-bar badge.
     unsafe fn place_overlay_above_target(overlay: HWND, target: HWND) {
-        let above = GetWindow(target, GW_HWNDPREV).unwrap_or(HWND::default());
+        let above = GetWindow(target, GW_HWNDPREV).unwrap_or_default();
         if above.0.is_null() || above == overlay {
             let _ = SetWindowPos(
                 target,

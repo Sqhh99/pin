@@ -339,8 +339,8 @@ mod tests {
     #[test]
     fn picker_msg_ids_are_distinct() {
         assert_ne!(PICKED_MSG, PICK_CANCELED_MSG);
-        assert!(PICKED_MSG >= WM_APP);
-        assert!(PICK_CANCELED_MSG >= WM_APP);
+        const { assert!(PICKED_MSG >= WM_APP) };
+        const { assert!(PICK_CANCELED_MSG >= WM_APP) };
     }
 
     #[test]
