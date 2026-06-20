@@ -60,14 +60,26 @@ Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Pin"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: autostart
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Pin"; Flags: deletevalue uninsdeletevalue; Tasks: not autostart
 
-[INI]
-Filename: "{app}\pin.ini"; Section: ""; Key: "AutoStart"; String: "true"; Tasks: autostart
-Filename: "{app}\pin.ini"; Section: ""; Key: "AutoStart"; String: "false"; Tasks: not autostart
-
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  AutoStartValue: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if WizardIsTaskSelected('autostart') then
+      AutoStartValue := 'true'
+    else
+      AutoStartValue := 'false';
+
+    SaveStringToFile(ExpandConstant('{app}\pin.ini'),
+      'AutoStart=' + AutoStartValue + #13#10, False);
+  end;
+end;
+
 function InitializeUninstall(): Boolean;
 var
   ResultCode: Integer;
