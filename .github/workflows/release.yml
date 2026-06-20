@@ -27,46 +27,41 @@ jobs:
         with:
           shared-key: pin-release
 
-      - name: Install cargo-wix
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-wix
-
       - name: Build release binary
         run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Run tests
         run: cargo test --release --target x86_64-pc-windows-msvc
 
-      - name: Generate license RTF for installer
+      - name: Build installer
         shell: pwsh
-        run: ./scripts/gen-license-rtf.ps1
-
-      - name: Build MSI installer
-        run: cargo wix --no-build --nocapture --target x86_64-pc-windows-msvc
+        run: |
+          $version = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          if (-not $version) { $version = "dev" }
+          # Sanitize for filename use (branch names like feat/x).
+          $version = $version -replace '[\\/:*?"<>|]', '-'
+          $iscc = Join-Path "${env:ProgramFiles(x86)}" 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup 6 ISCC.exe not found at $iscc"
+          }
+          & $iscc /Qp "/DMyAppVersion=$version" installer\pin.iss
+          if ($LASTEXITCODE -ne 0) {
+            throw "ISCC.exe failed with exit code $LASTEXITCODE"
+          }
 
       - name: Stage artifacts
         id: stage
         shell: pwsh
         run: |
-          $version = "${env:GITHUB_REF_NAME}" -replace '^v',''
-          if (-not $version) { $version = "dev" }
-          # Branch names like feat/autostart must not contain path separators in filenames.
-          $version = $version -replace '[\\/:*?"<>|]', '-'
-          New-Item -ItemType Directory -Force dist | Out-Null
-          $msi = Get-ChildItem target\wix -Filter *.msi -ErrorAction SilentlyContinue |
+          $setup = Get-ChildItem dist -Filter *.exe -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
-          if (-not $msi) {
-            throw "MSI artifact was not found in target\wix"
+          if (-not $setup) {
+            throw "Installer .exe was not found in dist"
           }
-          $outName = "pin-$version-windows-x64.msi"
-          $outPath = Join-Path dist $outName
-          Copy-Item $msi.FullName $outPath
-          $hash = (Get-FileHash $outPath -Algorithm SHA256).Hash.ToLower()
-          "$hash  $outName" | Out-File -FilePath "$outPath.sha256" -Encoding ascii
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($setup.Name)" | Out-File -FilePath "$($setup.FullName).sha256" -Encoding ascii
           Get-ChildItem dist
-          "msi_name=$outName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -80,7 +75,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.msi
+            dist/*.exe
             dist/*.sha256
           generate_release_notes: true
           draft: false
