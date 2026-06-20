@@ -22,7 +22,7 @@
     <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" />
-    <Property Id="INSTALLAUTOSTART" Value="0" />
+    <Property Id="INSTALLAUTOSTART" Value="1" />
     <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -47,6 +47,14 @@
         <File Id="PinExe" Source="$(var.CargoTargetBinDir)\pin.exe" />
         <File Id="LicenseFile" Source="LICENSE" />
         <File Id="PinIniFile" Source="wix\pin.ini" Name="pin.ini" />
+        <IniFile
+          Id="PinIniSetAutoStartDefault"
+          Directory="INSTALLFOLDER"
+          Name="pin.ini"
+          Section="-"
+          Key="AutoStart"
+          Value="false"
+          Action="createLine" />
         <RemoveFile Id="RemovePinExe" Name="pin.exe" On="uninstall" />
         <RemoveFile Id="RemoveLicenseFile" Name="LICENSE" On="uninstall" />
         <RemoveFile Id="RemovePinIniFile" Name="pin.ini" On="uninstall" />
@@ -75,7 +83,7 @@
           Section="-"
           Key="AutoStart"
           Value="true"
-          Action="addLine" />
+          Action="createLine" />
       </Component>
     </DirectoryRef>
 
@@ -140,8 +148,24 @@
       Return="ignore"
       ExeCommand='[SystemFolder]reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Pin /f' />
 
+    <CustomAction
+      Id="KillPinExe"
+      Directory="TARGETDIR"
+      Execute="immediate"
+      Return="ignore"
+      ExeCommand='[SystemFolder]taskkill.exe /F /IM pin.exe' />
+
+    <CustomAction
+      Id="ForceRemoveInstallDir"
+      Directory="TARGETDIR"
+      Execute="immediate"
+      Return="ignore"
+      ExeCommand='[SystemFolder]cmd.exe /c rmdir /s /q "[INSTALLFOLDER]"' />
+
     <InstallExecuteSequence>
+      <Custom Action="KillPinExe" Before="InstallValidate">REMOVE="ALL"</Custom>
       <Custom Action="RemoveAutostartRunValue" After="RemoveFiles">REMOVE="ALL"</Custom>
+      <Custom Action="ForceRemoveInstallDir" After="RemoveAutostartRunValue">REMOVE="ALL"</Custom>
     </InstallExecuteSequence>
 
     <UI>
