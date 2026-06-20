@@ -31,7 +31,7 @@ use windows::Win32::System::Threading::CreateMutexW;
 const CLASS_NAME: PCWSTR = w!("PinAppMsgWindow");
 
 thread_local! {
-    static STATE: RefCell<Option<AppState>> = RefCell::new(None);
+    static STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
 }
 
 struct AppState {

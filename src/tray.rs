@@ -41,7 +41,8 @@ impl Tray {
             .map_err(|e| anyhow!("menu append: {e}"))?;
         menu.append(&PredefinedMenuItem::separator())
             .map_err(|e| anyhow!("menu separator: {e}"))?;
-        menu.append(&quit).map_err(|e| anyhow!("menu append: {e}"))?;
+        menu.append(&quit)
+            .map_err(|e| anyhow!("menu append: {e}"))?;
 
         let tray = TrayIconBuilder::new()
             .with_icon(icon)

@@ -81,7 +81,7 @@ unsafe fn create_cursor_from_rgba(rgba: &Rgba, hotspot_x: u32, hotspot_y: u32) -
 
     // Monochrome mask: all zero. When the color bitmap carries alpha, Windows
     // largely ignores the mask; it still must be sized correctly.
-    let mask_stride = ((w as usize + 15) / 16) * 2;
+    let mask_stride = (w as usize).div_ceil(16) * 2;
     let mask_buf = vec![0u8; mask_stride * h as usize];
     let h_mask = CreateBitmap(w, h, 1, 1, Some(mask_buf.as_ptr() as *const _));
     if h_mask.is_invalid() {

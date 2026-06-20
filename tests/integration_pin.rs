@@ -75,13 +75,21 @@ fn pin_then_unpin_toggles_wsex_topmost() {
     let hwnd = create_test_window();
     let api = RealWindowApi;
 
-    assert_eq!(ex_style(hwnd) & WS_EX_TOPMOST.0, 0, "should start non-topmost");
+    assert_eq!(
+        ex_style(hwnd) & WS_EX_TOPMOST.0,
+        0,
+        "should start non-topmost"
+    );
 
     api.set_topmost(hwnd.into(), true).expect("set topmost");
     assert_ne!(ex_style(hwnd) & WS_EX_TOPMOST.0, 0, "should now be topmost");
 
     api.set_topmost(hwnd.into(), false).expect("clear topmost");
-    assert_eq!(ex_style(hwnd) & WS_EX_TOPMOST.0, 0, "should be non-topmost again");
+    assert_eq!(
+        ex_style(hwnd) & WS_EX_TOPMOST.0,
+        0,
+        "should be non-topmost again"
+    );
 
     unsafe {
         let _ = DestroyWindow(hwnd);
