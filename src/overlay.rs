@@ -36,6 +36,19 @@ pub fn compute_overlay_rect(window: Rect, dpi: u32) -> Rect {
     Rect { left, top, right, bottom }
 }
 
+#[cfg(any(windows, test))]
+fn should_show_overlay_for_hit(
+    hit: isize,
+    overlay: isize,
+    target: isize,
+    hit_is_target_child: bool,
+) -> bool {
+    if hit == 0 {
+        return false;
+    }
+    hit == overlay || hit == target || hit_is_target_child
+}
+
 #[cfg(windows)]
 pub use win_impl::{create_overlay, destroy_overlay, UNPIN_NOTIFY};
 
@@ -269,10 +282,12 @@ mod win_impl {
         if hit.0.is_null() {
             return false;
         }
-        if hit == overlay {
-            return true;
-        }
-        IsChild(target, hit).as_bool()
+        should_show_overlay_for_hit(
+            hit.0 as isize,
+            overlay.0 as isize,
+            target.0 as isize,
+            IsChild(target, hit).as_bool(),
+        )
     }
 
     unsafe extern "system" fn wnd_proc(
@@ -411,6 +426,11 @@ mod win_impl {
 mod tests {
     use super::*;
 
+    const OVERLAY_HWND: isize = 0x1000;
+    const TARGET_HWND: isize = 0x2000;
+    const TARGET_CHILD_HWND: isize = 0x2001;
+    const OTHER_HWND: isize = 0x3000;
+
     #[test]
     fn overlay_rect_inside_window_at_96_dpi() {
         let win = Rect { left: 100, top: 200, right: 900, bottom: 800 };
@@ -436,5 +456,43 @@ mod tests {
         // Top-right anchored: should be in the upper portion and right side.
         assert!(r.top < 30, "top={} should be in title bar", r.top);
         assert!(r.right > win.right * 8 / 10, "should sit near right edge");
+    }
+
+    #[test]
+    fn overlay_visibility_keeps_visible_for_owning_windows() {
+        assert!(should_show_overlay_for_hit(
+            OVERLAY_HWND,
+            OVERLAY_HWND,
+            TARGET_HWND,
+            false
+        ));
+        assert!(should_show_overlay_for_hit(
+            TARGET_HWND,
+            OVERLAY_HWND,
+            TARGET_HWND,
+            false
+        ));
+        assert!(should_show_overlay_for_hit(
+            TARGET_CHILD_HWND,
+            OVERLAY_HWND,
+            TARGET_HWND,
+            true
+        ));
+    }
+
+    #[test]
+    fn overlay_visibility_hides_for_empty_or_unrelated_hits() {
+        assert!(!should_show_overlay_for_hit(
+            0,
+            OVERLAY_HWND,
+            TARGET_HWND,
+            false
+        ));
+        assert!(!should_show_overlay_for_hit(
+            OTHER_HWND,
+            OVERLAY_HWND,
+            TARGET_HWND,
+            false
+        ));
     }
 }
