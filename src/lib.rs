@@ -1,25 +1,27 @@
-//! Pin library: OS-agnostic core plus Windows-specific glue.
+//! Pin library: platform-free domain logic plus Windows-specific glue.
 //!
-//! Public surface is intentionally minimal — exported for integration tests
-//! and to give the binary a single entry point ([`run`]).
+//! Layers (each depends only on the ones above it):
+//! - [`domain`]: pure logic, unit-tested on any host.
+//! - [`resources`]: embedded images and pixel helpers.
+//! - [`win`]: thin Win32 wrappers (RAII handles, window queries).
+//! - `ui`: windows Pin owns — picker, overlay badge, tray (views).
+//! - `autostart`: settings file + `Run` registry glue.
+//! - `app`: the controller; owns all state, runs the message loop.
+//!
+//! Only what the binary and integration tests need is public.
 
-pub mod overlay;
-pub mod pinned;
+pub mod domain;
 pub mod resources;
+
+#[cfg(windows)]
 pub mod win;
 
 #[cfg(windows)]
-pub mod app;
+mod app;
 #[cfg(windows)]
-pub mod autostart;
+mod autostart;
 #[cfg(windows)]
-pub mod cursor;
-#[cfg(windows)]
-pub mod selection;
-#[cfg(windows)]
-pub mod tray;
+mod ui;
 
 #[cfg(windows)]
-pub fn run() -> anyhow::Result<()> {
-    app::run()
-}
+pub use app::run;
