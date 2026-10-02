@@ -1,19 +1,23 @@
-//! Integration test: create a real hidden window on Windows, set it topmost
-//! through the production [`RealWindowApi`], and verify the WS_EX_TOPMOST bit.
+//! Integration test: create real hidden windows on Windows and drive them
+//! through the production [`RealWindowApi`] and window queries.
 //!
 //! Skipped on non-Windows.
 
 #![cfg(windows)]
 
+use std::sync::OnceLock;
+
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowLongW, RegisterClassExW,
-    UnregisterClassW, GWL_EXSTYLE, WNDCLASSEXW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowLongW, RegisterClassExW, GWL_EXSTYLE,
+    WNDCLASSEXW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
 };
 
-use pin::win::{RealWindowApi, WindowApi};
+use pin::domain::window::WindowApi;
+use pin::win::api::{frame_bounds, is_window};
+use pin::win::RealWindowApi;
 
 const CLASS: PCWSTR = w!("PinTestWindowClass");
 
@@ -29,8 +33,12 @@ unsafe extern "system" fn test_wnd_proc(
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+/// Register the class exactly once per process and never unregister it:
+/// tests run in parallel, so unregistering in one test races window
+/// creation in another.
 fn ensure_class() {
-    unsafe {
+    static REGISTERED: OnceLock<()> = OnceLock::new();
+    REGISTERED.get_or_init(|| unsafe {
         let hinst = GetModuleHandleW(None).expect("module handle");
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -39,73 +47,85 @@ fn ensure_class() {
             lpszClassName: CLASS,
             ..Default::default()
         };
-        // Ignore failure (class may already exist between tests in the same proc).
-        let _ = RegisterClassExW(&wc);
+        assert_ne!(RegisterClassExW(&wc), 0, "RegisterClassExW");
+    });
+}
+
+/// Hidden test window, destroyed on drop.
+struct TestWindow(HWND);
+
+impl TestWindow {
+    fn new() -> Self {
+        ensure_class();
+        let hwnd = unsafe {
+            CreateWindowExW(
+                Default::default(),
+                CLASS,
+                w!("pin-test"),
+                WS_OVERLAPPEDWINDOW,
+                0,
+                0,
+                200,
+                100,
+                None,
+                None,
+                GetModuleHandleW(None).expect("module handle"),
+                None,
+            )
+            .expect("CreateWindowExW")
+        };
+        Self(hwnd)
+    }
+
+    fn ex_style(&self) -> u32 {
+        unsafe { GetWindowLongW(self.0, GWL_EXSTYLE) as u32 }
     }
 }
 
-fn create_test_window() -> HWND {
-    ensure_class();
-    unsafe {
-        let hinst = GetModuleHandleW(None).expect("module handle");
-        CreateWindowExW(
-            Default::default(),
-            CLASS,
-            w!("pin-test"),
-            WS_OVERLAPPEDWINDOW,
-            0,
-            0,
-            200,
-            100,
-            None,
-            None,
-            hinst,
-            None,
-        )
-        .expect("CreateWindowExW")
+impl Drop for TestWindow {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DestroyWindow(self.0);
+        }
     }
-}
-
-fn ex_style(hwnd: HWND) -> u32 {
-    unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 }
 }
 
 #[test]
 fn pin_then_unpin_toggles_wsex_topmost() {
-    let hwnd = create_test_window();
+    let win = TestWindow::new();
     let api = RealWindowApi;
 
     assert_eq!(
-        ex_style(hwnd) & WS_EX_TOPMOST.0,
+        win.ex_style() & WS_EX_TOPMOST.0,
         0,
         "should start non-topmost"
     );
 
-    api.set_topmost(hwnd.into(), true).expect("set topmost");
-    assert_ne!(ex_style(hwnd) & WS_EX_TOPMOST.0, 0, "should now be topmost");
+    api.set_topmost(win.0.into(), true).expect("set topmost");
+    assert_ne!(win.ex_style() & WS_EX_TOPMOST.0, 0, "should now be topmost");
 
-    api.set_topmost(hwnd.into(), false).expect("clear topmost");
+    api.set_topmost(win.0.into(), false).expect("clear topmost");
     assert_eq!(
-        ex_style(hwnd) & WS_EX_TOPMOST.0,
+        win.ex_style() & WS_EX_TOPMOST.0,
         0,
         "should be non-topmost again"
     );
-
-    unsafe {
-        let _ = DestroyWindow(hwnd);
-        let hinst = GetModuleHandleW(None).expect("module handle");
-        let _ = UnregisterClassW(CLASS, hinst);
-    }
 }
 
 #[test]
-fn window_rect_returns_nonempty() {
-    let hwnd = create_test_window();
-    let api = RealWindowApi;
-    let r = api.window_rect(hwnd.into()).expect("rect");
+fn frame_bounds_returns_nonempty() {
+    let win = TestWindow::new();
+    let r = frame_bounds(win.0).expect("rect");
     assert!(r.width() > 0);
     assert!(r.height() > 0);
-    unsafe {
-        let _ = DestroyWindow(hwnd);
-    }
+}
+
+#[test]
+fn is_window_tracks_destruction() {
+    let win = TestWindow::new();
+    let hwnd = win.0;
+    assert!(RealWindowApi.is_window(hwnd.into()));
+    drop(win);
+    assert!(!is_window(hwnd));
+    assert!(!is_window(HWND::default()));
 }

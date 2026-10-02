@@ -1,58 +1,27 @@
-//! Thin abstraction over the Win32 calls we need for window pinning.
+//! Window identity, the OS operations the pin logic needs, and the rules for
+//! which windows may be pinned.
 //!
-//! Exposing a [`WindowApi`] trait lets us unit-test [`crate::pinned`] without
-//! touching real HWNDs. The [`RealWindowApi`] implementation calls into the
-//! `windows` crate.
+//! The [`WindowApi`] trait lets [`crate::domain::pinned`] be unit-tested
+//! without touching real HWNDs; `crate::win::RealWindowApi` implements it.
 
-#[cfg(windows)]
-use windows::Win32::Foundation::{HWND, RECT};
+use crate::domain::geometry::Rect;
 
 /// Opaque platform window handle. Wrapped so tests can fabricate values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WindowId(pub isize);
 
-#[cfg(windows)]
-impl From<HWND> for WindowId {
-    fn from(h: HWND) -> Self {
-        WindowId(h.0 as isize)
-    }
+/// Operations the pinned-set logic needs from the OS. Mockable for tests.
+pub trait WindowApi {
+    fn set_topmost(&self, w: WindowId, on: bool) -> anyhow::Result<()>;
+    fn is_window(&self, w: WindowId) -> bool;
 }
 
-#[cfg(windows)]
-impl From<WindowId> for HWND {
-    fn from(w: WindowId) -> Self {
-        HWND(w.0 as *mut _)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Rect {
-    pub left: i32,
-    pub top: i32,
-    pub right: i32,
-    pub bottom: i32,
-}
-
-#[cfg(windows)]
-impl From<RECT> for Rect {
-    fn from(r: RECT) -> Self {
-        Rect {
-            left: r.left,
-            top: r.top,
-            right: r.right,
-            bottom: r.bottom,
-        }
-    }
-}
-
-impl Rect {
-    pub fn width(&self) -> i32 {
-        self.right - self.left
-    }
-    pub fn height(&self) -> i32 {
-        self.bottom - self.top
-    }
-}
+/// Window classes of Pin's own helper windows. Kept here (rather than next
+/// to each `RegisterClassExW`) so the pinnable-window filter and the window
+/// creation code share one source of truth.
+pub const APP_WINDOW_CLASS: &str = "PinAppMsgWindow";
+pub const PICKER_WINDOW_CLASS: &str = "PinPickerClass";
+pub const OVERLAY_WINDOW_CLASS: &str = "PinOverlayClass";
 
 const WS_CHILD_BITS: u32 = 0x4000_0000;
 const WS_CAPTION_BITS: u32 = 0x00C0_0000;
@@ -64,7 +33,7 @@ const WS_EX_APPWINDOW_BITS: u32 = 0x0004_0000;
 const MIN_PINNABLE_WIDTH: i32 = 32;
 const MIN_PINNABLE_HEIGHT: i32 = 32;
 
-const NON_PINNABLE_CLASSES: &[&str] = &[
+const SHELL_CLASSES: &[&str] = &[
     "Progman",
     "WorkerW",
     "Shell_TrayWnd",
@@ -72,11 +41,11 @@ const NON_PINNABLE_CLASSES: &[&str] = &[
     "DV2ControlHost",
     "MSTaskListWClass",
     "NotifyIconOverflowWindow",
-    "PinPickerClass",
-    "PinOverlayClass",
-    "PinAppMsgWindow",
 ];
 
+const OWN_CLASSES: &[&str] = &[APP_WINDOW_CLASS, PICKER_WINDOW_CLASS, OVERLAY_WINDOW_CLASS];
+
+/// Snapshot of the window properties the pinnable filter looks at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowCandidate {
     pub class_name: String,
@@ -111,8 +80,9 @@ pub fn is_pinnable_candidate(candidate: &WindowCandidate) -> bool {
         return false;
     }
 
-    if NON_PINNABLE_CLASSES
+    if SHELL_CLASSES
         .iter()
+        .chain(OWN_CLASSES)
         .any(|name| name.eq_ignore_ascii_case(candidate.class_name.as_str()))
     {
         return false;
@@ -126,76 +96,8 @@ pub fn is_pinnable_candidate(candidate: &WindowCandidate) -> bool {
     has_app_window || (has_caption && (has_sys_menu || has_thick_frame))
 }
 
-/// Operations the pinned-set logic needs from the OS. Mockable for tests.
-pub trait WindowApi {
-    fn set_topmost(&self, w: WindowId, on: bool) -> anyhow::Result<()>;
-    fn window_rect(&self, w: WindowId) -> anyhow::Result<Rect>;
-    fn is_window(&self, w: WindowId) -> bool;
-}
-
-#[cfg(windows)]
-pub use real::RealWindowApi;
-
-#[cfg(windows)]
-pub mod real {
-    use super::*;
-    use anyhow::{anyhow, Result};
-    use windows::Win32::Foundation::{GetLastError, HWND, RECT};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, IsWindow, SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SET_WINDOW_POS_FLAGS,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    };
-
-    pub struct RealWindowApi;
-
-    impl WindowApi for RealWindowApi {
-        fn set_topmost(&self, w: WindowId, on: bool) -> Result<()> {
-            let hwnd: HWND = w.into();
-            let insert_after = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
-            let flags: SET_WINDOW_POS_FLAGS = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
-            unsafe { SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, flags) }
-                .map_err(|e| anyhow!("SetWindowPos failed: {e}"))
-        }
-
-        fn window_rect(&self, w: WindowId) -> Result<Rect> {
-            let hwnd: HWND = w.into();
-            let mut r = RECT::default();
-            unsafe { GetWindowRect(hwnd, &mut r) }
-                .map_err(|e| anyhow!("GetWindowRect failed: {e}"))?;
-            Ok(r.into())
-        }
-
-        fn is_window(&self, w: WindowId) -> bool {
-            let hwnd: HWND = w.into();
-            unsafe { IsWindow(hwnd) }.as_bool()
-        }
-    }
-
-    /// Top-level window under the screen point, or None.
-    pub fn top_level_window_at(pt_x: i32, pt_y: i32) -> Option<WindowId> {
-        use windows::Win32::Foundation::POINT;
-        use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, WindowFromPoint, GA_ROOT};
-        let hwnd = unsafe { WindowFromPoint(POINT { x: pt_x, y: pt_y }) };
-        if hwnd.0.is_null() {
-            return None;
-        }
-        let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
-        if root.0.is_null() {
-            None
-        } else {
-            Some(root.into())
-        }
-    }
-
-    // Silence unused-import warnings if features change.
-    #[allow(dead_code)]
-    fn _last_error_touch() {
-        let _ = unsafe { GetLastError() };
-    }
-}
-
 #[cfg(test)]
-mod candidate_tests {
+mod tests {
     use super::*;
 
     fn app_candidate() -> WindowCandidate {
