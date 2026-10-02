@@ -27,46 +27,64 @@ jobs:
         with:
           shared-key: pin-release
 
+      # Cargo.toml is the single source of truth for the version.
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object name -eq 'pin').version
+          if (-not $version) { throw 'Could not read the pin package version' }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match Cargo.toml version $version (expected v$version)"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Building Pin $version"
+
       - name: Build release binary
         run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Run tests
         run: cargo test --release --target x86_64-pc-windows-msvc
 
+      - name: Verify embedded resources
+        shell: pwsh
+        run: |
+          $exe = Get-Item target\x86_64-pc-windows-msvc\release\pin.exe
+          $product = $exe.VersionInfo.ProductVersion
+          if (-not $product -or -not $product.StartsWith('${{ steps.version.outputs.version }}')) {
+            throw "pin.exe ProductVersion is '$product'; resources (icon/manifest/version) were not embedded"
+          }
+          Write-Host "pin.exe ProductVersion $product"
+
       - name: Build installer
         shell: pwsh
-        run: |
-          $version = "${env:GITHUB_REF_NAME}" -replace '^v',''
-          if (-not $version) { $version = "dev" }
-          # Sanitize for filename use (branch names like feat/x).
-          $version = $version -replace '[\\/:*?"<>|]', '-'
-          $iscc = Join-Path "${env:ProgramFiles(x86)}" 'Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path $iscc)) {
-            throw "Inno Setup 6 ISCC.exe not found at $iscc"
-          }
-          & $iscc /Qp "/DMyAppVersion=$version" installer\pin.iss
-          if ($LASTEXITCODE -ne 0) {
-            throw "ISCC.exe failed with exit code $LASTEXITCODE"
-          }
+        run: .github/scripts/build-installer.ps1 -Version '${{ steps.version.outputs.version }}'
 
-      - name: Stage artifacts
-        id: stage
+      - name: Build portable zip
         shell: pwsh
         run: |
-          $setup = Get-ChildItem dist -Filter *.exe -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not $setup) {
-            throw "Installer .exe was not found in dist"
+          $version = '${{ steps.version.outputs.version }}'
+          $staging = Join-Path $env:RUNNER_TEMP "pin-$version"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\pin.exe, LICENSE, README.md $staging
+          Compress-Archive -Path "$staging\*" -DestinationPath "dist\pin-$version-windows-x64-portable.zip" -Force
+
+      - name: Write checksums
+        shell: pwsh
+        run: |
+          $assets = Get-ChildItem dist -File | Where-Object { $_.Extension -in '.exe', '.zip' }
+          if ($assets.Count -lt 2) { throw "Expected installer and portable zip in dist, found: $($assets.Name -join ', ')" }
+          foreach ($asset in $assets) {
+            $hash = (Get-FileHash $asset.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($asset.Name)" | Out-File -FilePath "$($asset.FullName).sha256" -Encoding ascii
           }
-          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
-          "$hash  $($setup.Name)" | Out-File -FilePath "$($setup.FullName).sha256" -Encoding ascii
           Get-ChildItem dist
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: pin-windows-x64
+          name: pin-${{ steps.version.outputs.version }}-windows-x64
           path: dist/*
           if-no-files-found: error
 
@@ -76,6 +94,7 @@ jobs:
         with:
           files: |
             dist/*.exe
+            dist/*.zip
             dist/*.sha256
           generate_release_notes: true
           draft: false
