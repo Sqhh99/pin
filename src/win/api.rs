@@ -4,7 +4,9 @@ use std::ffi::c_void;
 
 use anyhow::{anyhow, Result};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetParent, GetWindow, GetWindowLongW, GetWindowRect, IsIconic, IsWindow,
@@ -13,6 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::domain::geometry::{normalize_dpi, Rect};
+use crate::domain::target::TargetStatus;
 use crate::domain::window::{is_pinnable_candidate, WindowApi, WindowCandidate, WindowId};
 
 pub struct RealWindowApi;
@@ -80,6 +83,36 @@ pub fn frame_bounds(hwnd: HWND) -> Option<Rect> {
         Ok(()) if r.right > r.left && r.bottom > r.top => Some(r.into()),
         _ => window_rect(hwnd),
     }
+}
+
+/// Whether `hwnd` still exists and is actually on screen.
+pub fn target_status(hwnd: HWND) -> TargetStatus {
+    if !is_window(hwnd) {
+        TargetStatus::Gone
+    } else if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+        TargetStatus::Hidden
+    } else if unsafe { IsIconic(hwnd) }.as_bool() {
+        TargetStatus::Minimized
+    } else if is_cloaked(hwnd) {
+        TargetStatus::Cloaked
+    } else {
+        TargetStatus::Shown
+    }
+}
+
+/// DWM is hiding `hwnd` although it is "visible": it lives on another
+/// virtual desktop, or is a suspended UWP app.
+fn is_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
+    let res = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut c_void,
+            std::mem::size_of::<u32>() as u32,
+        )
+    };
+    res.is_ok() && cloaked != 0
 }
 
 /// Top-level window at the screen point, following both parent and owner
