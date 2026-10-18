@@ -11,12 +11,14 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowLongW, RegisterClassExW, GWL_EXSTYLE,
-    WNDCLASSEXW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowLongW, RegisterClassExW, ShowWindow,
+    GWL_EXSTYLE, SW_HIDE, SW_RESTORE, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WNDCLASSEXW,
+    WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
 };
 
+use pin::domain::target::TargetStatus;
 use pin::domain::window::WindowApi;
-use pin::win::api::{frame_bounds, is_window};
+use pin::win::api::{frame_bounds, is_window, target_status};
 use pin::win::RealWindowApi;
 
 const CLASS: PCWSTR = w!("PinTestWindowClass");
@@ -128,4 +130,31 @@ fn is_window_tracks_destruction() {
     drop(win);
     assert!(!is_window(hwnd));
     assert!(!is_window(HWND::default()));
+}
+
+#[test]
+fn target_status_follows_show_state() {
+    let win = TestWindow::new();
+    let hwnd = win.0;
+    assert_eq!(target_status(hwnd), TargetStatus::Hidden);
+
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+    assert_eq!(target_status(hwnd), TargetStatus::Shown);
+
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+    }
+    assert_eq!(target_status(hwnd), TargetStatus::Minimized);
+
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = ShowWindow(hwnd, SW_HIDE);
+    }
+    // "Closed to the tray": the window still exists but is not visible.
+    assert_eq!(target_status(hwnd), TargetStatus::Hidden);
+
+    drop(win);
+    assert_eq!(target_status(hwnd), TargetStatus::Gone);
 }

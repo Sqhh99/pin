@@ -13,6 +13,12 @@ A tiny Windows system-tray utility that lets you "pin" any window so it stays on
 
 The pin badge follows the target window as you move/resize it (~60 fps), and
 rescales when the window moves to a monitor with a different DPI.
+
+If a pinned app closes its window — including apps that "exit" to the tray by
+hiding it — the pin is dropped automatically, so the window comes back
+unpinned. Minimizing the window, or switching to another virtual desktop, only
+hides the badge until the window is back.
+
 The `Start with Windows` tray item toggles whether Pin starts automatically when
 you sign in to Windows.
 

@@ -7,4 +7,5 @@
 pub mod geometry;
 pub mod pinned;
 pub mod settings;
+pub mod target;
 pub mod window;

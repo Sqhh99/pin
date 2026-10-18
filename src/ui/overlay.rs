@@ -4,9 +4,11 @@
 //! - [`Overlay`] is an RAII handle owned by the app's pinned set; dropping it
 //!   destroys the window. The overlay never destroys itself and never
 //!   un-topmosts its target.
-//! - Clicking the badge, or the target disappearing, posts
-//!   [`notify::UNPIN_REQUESTED`] to the app window, which unpins the target
-//!   and drops the overlay.
+//! - Clicking the badge, or the target closing (destroyed, or hidden — as
+//!   apps that "exit" to the tray do), posts [`notify::UNPIN_REQUESTED`] to
+//!   the app window, which unpins the target and drops the overlay. While the
+//!   target is minimized or cloaked the badge just hides; see
+//!   [`crate::domain::target`].
 //! - A ~60 fps timer keeps the badge on the target's caption, re-applies
 //!   `HWND_TOPMOST` if the target lost it (DeskPins' `fixTopStyle`), and
 //!   re-renders on DPI changes. Each tick only issues `SetWindowPos` /
@@ -14,6 +16,7 @@
 
 use std::cell::Cell;
 use std::sync::{LazyLock, OnceLock};
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use log::{debug, warn};
@@ -32,10 +35,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::domain::geometry::{
     compute_overlay_rect, icon_px_for_dpi, should_show_overlay_for_hit, Rect,
 };
+use crate::domain::target::{BadgeAction, TargetWatch};
 use crate::domain::window::{WindowId, OVERLAY_WINDOW_CLASS};
 use crate::resources::Asset;
 use crate::ui::notify;
-use crate::win::api::{dpi_for, frame_bounds, is_topmost, is_window, set_topmost};
+use crate::win::api::{dpi_for, frame_bounds, is_topmost, is_window, set_topmost, target_status};
 use crate::win::cursor::{load_asset_cursor, CursorHotspot};
 use crate::win::gdi::{Bitmap, MemDc, ScreenDc};
 use crate::win::{encode_wide, register_class, set_user_data, take_user_data, user_data};
@@ -60,6 +64,7 @@ struct OverlayCtx {
     /// Last position we moved the badge to.
     last_rect: Cell<Option<Rect>>,
     visible: Cell<bool>,
+    watch: Cell<TargetWatch>,
     unpin_requested: Cell<bool>,
 }
 
@@ -101,6 +106,7 @@ impl Overlay {
                 dpi: Cell::new(dpi),
                 last_rect: Cell::new(None),
                 visible: Cell::new(false),
+                watch: Cell::new(TargetWatch::default()),
                 unpin_requested: Cell::new(false),
             },
         );
@@ -183,8 +189,7 @@ unsafe fn request_unpin(overlay: HWND, ctx: &OverlayCtx) {
     if ctx.unpin_requested.replace(true) {
         return;
     }
-    let _ = ShowWindow(overlay, SW_HIDE);
-    ctx.visible.set(false);
+    set_visible(overlay, ctx, false);
     let _ = PostMessageW(
         ctx.notify,
         notify::UNPIN_REQUESTED,
@@ -198,10 +203,24 @@ unsafe fn tick(overlay: HWND, ctx: &OverlayCtx) {
         return;
     }
     let target = ctx.target;
-    if !is_window(target) {
-        debug!("overlay: target {:?} gone", target.0);
-        request_unpin(overlay, ctx);
-        return;
+    let status = target_status(target);
+    let mut watch = ctx.watch.get();
+    let action = watch.observe(status, Instant::now());
+    ctx.watch.set(watch);
+    match action {
+        BadgeAction::Unpin => {
+            debug!("overlay: target {:?} closed ({status:?})", target.0);
+            request_unpin(overlay, ctx);
+            return;
+        }
+        // Without this the badge would linger: once visible, it is what
+        // `WindowFromPoint` finds at its own center, so the occlusion check
+        // below keeps it shown even with no target beneath it.
+        BadgeAction::Hide => {
+            set_visible(overlay, ctx, false);
+            return;
+        }
+        BadgeAction::Track => {}
     }
     // Some apps clear WS_EX_TOPMOST themselves; keep the pin in force.
     if !is_topmost(target) {
@@ -237,10 +256,13 @@ unsafe fn tick(overlay: HWND, ctx: &OverlayCtx) {
 
     keep_directly_above(overlay, target);
 
-    let show = is_unoccluded(overlay, target, rect);
-    if show != ctx.visible.get() {
+    set_visible(overlay, ctx, is_unoccluded(overlay, target, rect));
+}
+
+/// Show or hide the badge, only calling `ShowWindow` when that changes.
+unsafe fn set_visible(overlay: HWND, ctx: &OverlayCtx, show: bool) {
+    if show != ctx.visible.replace(show) {
         let _ = ShowWindow(overlay, if show { SW_SHOWNOACTIVATE } else { SW_HIDE });
-        ctx.visible.set(show);
     }
 }
 
